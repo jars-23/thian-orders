@@ -255,6 +255,54 @@ nav button.selected svg { color: var(--brand-orange) }
     padding-top: 14px;
 }
 
+/* ---------- Menú lateral colapsable ---------- */
+aside { transition: width 200ms ease, padding 200ms ease }
+.brandtext { flex: 1; min-width: 0 }
+
+.navtoggle {
+    flex: none;
+    width: 34px;
+    min-height: 34px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    background: transparent;
+    color: var(--text-on-dark-muted);
+    border-radius: var(--radius-sm);
+}
+.navtoggle:hover:not(:disabled) { background: var(--sidebar-hover); color: var(--text-on-dark) }
+
+.avatar { display: none }
+.navlabel { white-space: nowrap; overflow: hidden }
+
+aside.collapsed { width: 76px; padding: 22px 12px }
+aside.collapsed .brand { flex-direction: column; gap: 14px; padding: 4px 0 }
+aside.collapsed .brandtext,
+aside.collapsed .identity,
+aside.collapsed .navlabel { display: none }
+aside.collapsed .avatar {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    margin: 0 auto;
+    border-radius: 50%;
+    background: var(--sidebar-hover);
+    color: var(--text-on-dark);
+    font-size: .8rem;
+    font-weight: 700;
+    letter-spacing: .02em;
+}
+aside.collapsed nav button,
+aside.collapsed .logout {
+    justify-content: center;
+    gap: 0;
+    padding-left: 0;
+    padding-right: 0;
+    min-height: 44px;
+}
+aside.collapsed nav button.selected { border-left-color: transparent; box-shadow: inset 3px 0 0 var(--brand-orange) }
+
 main {
     padding: 28px 32px;
     max-width: 1240px;
@@ -771,6 +819,14 @@ tbody tr:last-child td { border-bottom: 0 }
     }
 
     .brand small, .identity { display: none }
+    /* En móvil el menú ya es una barra superior: sin modo colapsado */
+    .navtoggle, aside .avatar, aside.collapsed .avatar { display: none }
+    aside.collapsed { width: 100%; padding: 10px 12px }
+    aside.collapsed .brand { flex-direction: row; gap: 12px; padding: 0 }
+    aside.collapsed .navlabel { display: inline }
+    aside.collapsed nav button { padding: 9px 12px; gap: 12px; min-height: 40px }
+    aside.collapsed nav button.selected { box-shadow: none; border-bottom-color: var(--brand-orange) }
+    aside.collapsed .logout { padding: 9px; min-height: 40px }
     .brand { padding: 0; font-size: 0 }
     .brand img { width: 34px; height: 34px }
 

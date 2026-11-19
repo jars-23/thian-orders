@@ -14,6 +14,8 @@ import {
   Trash2,
   ImagePlus,
   Loader2,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import "./style.css";
 import { ThemeProvider, CssBaseline } from "@mui/material";
@@ -74,6 +76,23 @@ function App() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [notice, setNotice] = useState("");
+  // Menú lateral colapsado (solo escritorio); se recuerda en este navegador.
+  const [navCollapsed, setNavCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("thian.navCollapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleNav = () =>
+    setNavCollapsed((v) => {
+      try {
+        localStorage.setItem("thian.navCollapsed", v ? "0" : "1");
+      } catch {
+        /* sin almacenamiento: solo dura la sesión */
+      }
+      return !v;
+    });
   const hasRole = (...codes) => codes.some((c) => roles.includes(c));
   const admin = hasRole("admin");
   // Deben coincidir con las políticas RLS (supabase/migrate_v1_2.sql).
@@ -421,7 +440,7 @@ function App() {
   orders.forEach((o) => o.order_items?.forEach((i) => counts[i.status]++));
   return (
     <div className="shell">
-      <aside>
+      <aside className={navCollapsed ? "collapsed" : ""}>
         <div className="brand">
           <img
             src={`${import.meta.env.BASE_URL}logo-thian.png`}
@@ -429,9 +448,35 @@ function App() {
             width="40"
             height="40"
           />
-          <div>
+          <div className="brandtext">
             Thian Candle<small>Pedidos y producción</small>
           </div>
+          <button
+            type="button"
+            className="navtoggle"
+            onClick={toggleNav}
+            aria-expanded={!navCollapsed}
+            aria-label={navCollapsed ? "Mostrar menú" : "Ocultar menú"}
+            title={navCollapsed ? "Mostrar menú" : "Ocultar menú"}
+          >
+            {navCollapsed ? (
+              <PanelLeftOpen size={18} aria-hidden="true" />
+            ) : (
+              <PanelLeftClose size={18} aria-hidden="true" />
+            )}
+          </button>
+        </div>
+        <div
+          className="avatar"
+          aria-hidden="true"
+          title={`${profile.full_name} · ${roles.join(" · ")}`}
+        >
+          {(profile.full_name || "?")
+            .split(/\s+/)
+            .filter(Boolean)
+            .slice(0, 2)
+            .map((w) => w[0].toUpperCase())
+            .join("")}
         </div>
         <div className="identity">
           {profile.full_name}
@@ -449,23 +494,26 @@ function App() {
               key={id}
               className={tab === id ? "selected" : ""}
               aria-current={tab === id ? "page" : undefined}
+              title={navCollapsed ? title : undefined}
               onClick={() => {
                 setTab(id);
                 setError("");
                 setNotice("");
               }}
             >
-              <Icon size={18} />
-              {title}
+              <Icon size={18} aria-hidden="true" />
+              <span className="navlabel">{title}</span>
             </button>
           ))}
         </nav>
         <button
           className="logout"
           aria-label="Cerrar sesión"
+          title={navCollapsed ? "Cerrar sesión" : undefined}
           onClick={() => supabase.auth.signOut()}
         >
-          <LogOut size={17} /> Salir
+          <LogOut size={17} aria-hidden="true" />
+          <span className="navlabel">Salir</span>
         </button>
       </aside>
       <main>
