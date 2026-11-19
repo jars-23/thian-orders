@@ -15,7 +15,7 @@ import {
   ImagePlus,
   Loader2,
   PanelLeftClose,
-  Pin,
+  PanelLeftOpen,
   UserRound,
 } from "lucide-react";
 import "./style.css";
@@ -88,28 +88,25 @@ function App() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [notice, setNotice] = useState("");
-  // Menú lateral (escritorio): por defecto se oculta solo y se abre al pasar
-  // el mouse o con el teclado. "Fijar" lo deja abierto; se recuerda aquí.
+  // Menú lateral (escritorio): se abre y se recoge con el botón, y se recoge
+  // solo al entrar a una sección. El estado se recuerda en este navegador.
   const [roleNames, setRoleNames] = useState([]);
-  const [navPinned, setNavPinned] = useState(() => {
+  const [navCollapsed, setNavCollapsedState] = useState(() => {
     try {
-      return localStorage.getItem("thian.navPinned") === "1";
+      return localStorage.getItem("thian.navCollapsed") === "1";
     } catch {
       return false;
     }
   });
-  const [navPeek, setNavPeek] = useState(false);
-  const navCollapsed = !navPinned && !navPeek;
-  const toggleNav = () =>
-    setNavPinned((v) => {
-      try {
-        localStorage.setItem("thian.navPinned", v ? "0" : "1");
-      } catch {
-        /* sin almacenamiento: solo dura la sesión */
-      }
-      setNavPeek(false);
-      return !v;
-    });
+  const setNavCollapsed = (v) => {
+    setNavCollapsedState(v);
+    try {
+      localStorage.setItem("thian.navCollapsed", v ? "1" : "0");
+    } catch {
+      /* sin almacenamiento: solo dura la sesión */
+    }
+  };
+  const toggleNav = () => setNavCollapsed(!navCollapsed);
   const hasRole = (...codes) => codes.some((c) => roles.includes(c));
   const admin = hasRole("admin");
   // Deben coincidir con las políticas RLS (supabase/migrate_v1_2.sql).
@@ -470,15 +467,7 @@ function App() {
       .join("") || "?";
   return (
     <div className="shell">
-      <aside
-        className={navPinned ? "" : navPeek ? "overlay" : "collapsed"}
-        onMouseEnter={() => !navPinned && setNavPeek(true)}
-        onMouseLeave={() => setNavPeek(false)}
-        onFocus={() => !navPinned && setNavPeek(true)}
-        onBlur={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget)) setNavPeek(false);
-        }}
-      >
+      <aside className={navCollapsed ? "collapsed" : ""}>
         <div className="brand">
           {/* Menú abierto: firma. Menú colapsado y móvil: ícono. */}
           <img
@@ -501,14 +490,14 @@ function App() {
             type="button"
             className="navtoggle"
             onClick={toggleNav}
-            aria-pressed={navPinned}
-            aria-label={navPinned ? "Ocultar menú automáticamente" : "Fijar menú abierto"}
-            title={navPinned ? "Ocultar menú automáticamente" : "Fijar menú abierto"}
+            aria-expanded={!navCollapsed}
+            aria-label={navCollapsed ? "Mostrar menú" : "Ocultar menú"}
+            title={navCollapsed ? "Mostrar menú" : "Ocultar menú"}
           >
-            {navPinned ? (
-              <PanelLeftClose size={18} aria-hidden="true" />
+            {navCollapsed ? (
+              <PanelLeftOpen size={18} aria-hidden="true" />
             ) : (
-              <Pin size={16} aria-hidden="true" />
+              <PanelLeftClose size={18} aria-hidden="true" />
             )}
           </button>
         </div>
@@ -548,7 +537,7 @@ function App() {
                 setTab(id);
                 setError("");
                 setNotice("");
-                setNavPeek(false);
+                setNavCollapsed(true); // se recoge solo al cambiar de sección
               }}
             >
               <Icon size={18} aria-hidden="true" />

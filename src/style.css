@@ -309,16 +309,10 @@ nav button.selected svg { color: var(--brand-orange) }
     padding-top: 14px;
 }
 
-/* ---------- Menú lateral: se oculta solo ---------- */
+/* ---------- Menú lateral: botón para recoger; se recoge al cambiar de sección ---------- */
 aside { transition: width 200ms ease, padding 200ms ease, box-shadow 200ms ease; z-index: 40 }
 .brand { position: relative }
 .brandtext { flex: 1; min-width: 0; display: flex; justify-content: center; padding: 18px 0 2px }
-
-/* Abierto al pasar el mouse: se superpone al contenido sin moverlo */
-aside.overlay {
-    margin-right: -172px;           /* 248 px de menú − 76 px de la barra */
-    box-shadow: 12px 0 32px rgba(43, 29, 20, .28);
-}
 
 .navtoggle {
     position: absolute;
@@ -344,7 +338,7 @@ aside.overlay {
     padding: 0;
     object-fit: contain;
 }
-.brand img.logo-firma { display: block; width: 200px; height: auto; max-width: 100% }
+.brand img.logo-firma { display: block; width: 150px; height: auto; max-width: 100% }
 .brand img.logo-icono { display: none; width: 36px; height: 35px }
 aside.collapsed .brand img.logo-icono { display: block }
 
@@ -353,7 +347,7 @@ aside.collapsed .brand img.logo-icono { display: block }
 
 aside.collapsed { width: 76px; padding: 22px 12px }
 aside.collapsed .brand { flex-direction: column; gap: 14px; padding: 4px 0 }
-aside.collapsed .navtoggle { display: none }
+aside.collapsed .navtoggle { position: static }
 aside.collapsed .brandtext,
 aside.collapsed .identity,
 aside.collapsed .navlabel { display: none }
@@ -1033,7 +1027,7 @@ tfoot td { border-top: 2px solid var(--border); font-weight: 600 }
     .navtoggle, aside .avatar, aside.collapsed .avatar { display: none }
     .brandtext { display: none }
     .brand img.logo-icono { display: block; width: 34px; height: 33px }
-    aside.collapsed, aside.overlay { width: 100%; padding: 10px 12px; margin-right: 0; box-shadow: none }
+    aside.collapsed { width: 100%; padding: 10px 12px }
     aside.collapsed .brand { flex-direction: row; gap: 12px; padding: 0 }
     aside.collapsed .navlabel { display: inline }
     aside.collapsed nav button { padding: 9px 12px; gap: 12px; min-height: 40px }
