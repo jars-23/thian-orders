@@ -134,6 +134,7 @@ flowchart LR
 | Inicio de sesión del administrador en la app publicada | ✅ (la contraseña guardada no coincidía; se fijó por SQL con `extensions.crypt` y se verificó) |
 | `login-username` con logs de diagnóstico por paso (respuesta al cliente sigue siendo genérica) | ✅ redesplegada |
 | Pruebas por rol (seller, production, sales_production, billing, supervisor) | ⏳ |
+| Migración `20261118_order_seller_names.sql`: producción, facturación y supervisor ven el nombre del vendedor (solo `full_name`, sin abrir `profiles`) | ⏳ ejecutar en SQL Editor |
 
 ### Próximos pasos
 1. Crear el proyecto `thian-orders` en la región East US, con RLS automático activado y "Grant API access" desactivado.

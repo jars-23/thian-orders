@@ -89,6 +89,7 @@ Luego ejecuta el workflow **Deploy Thian Candle** (o haz push a `main`).
 ```
 src/                       Frontend React
 supabase/setup.sql         Esquema completo (instalación desde cero)
+supabase/migrations/       Cambios para bases ya instaladas (ejecutar en orden)
 supabase/functions/        Edge Functions login-username y create-user
 supabase/legacy/           Scripts históricos v1.0–v1.2 (solo referencia, no ejecutar)
 ```

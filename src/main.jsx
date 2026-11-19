@@ -94,14 +94,17 @@ function App() {
   async function reload() {
     if (!profile?.active) return;
     setBusy(true);
-    const [p, o, s, r, ur] = await Promise.all([
+    const [p, o, sn, s, r, ur] = await Promise.all([
       supabase.from("products").select("*").order("name"),
       supabase
         .from("orders")
         .select(
-          "*,profiles(full_name),order_items(id,product_id,quantity,status,notes,products(name))",
+          "*,order_items(id,product_id,quantity,status,notes,products(name))",
         )
         .order("created_at", { ascending: false }),
+      // profiles solo es legible por el propio usuario o admin; esta RPC
+      // expone solo el nombre de los vendedores de pedidos visibles.
+      supabase.rpc("order_seller_names"),
       admin
         ? supabase.from("profiles").select("*").order("full_name")
         : Promise.resolve({ data: [], error: null }),
@@ -116,7 +119,18 @@ function App() {
     if (err) message(err);
     else {
       setProducts(p.data || []);
-      setOrders(o.data || []);
+      // Si la RPC falla (p. ej. migración sin aplicar) los pedidos se
+      // muestran igual, con "—" como vendedor.
+      if (sn.error) console.warn("order_seller_names:", sn.error.message);
+      const sellerNames = new Map(
+        (sn.data || []).map((x) => [x.seller_id, x.full_name]),
+      );
+      setOrders(
+        (o.data || []).map((x) => ({
+          ...x,
+          seller_name: sellerNames.get(x.seller_id) || null,
+        })),
+      );
       setSellers(s.data || []);
       setRoleCatalog(r.data || []);
       setAssignments(ur.data || []);
@@ -791,7 +805,7 @@ function Orders({ orders, admin, busy, changeStatus }) {
                 {o.customer_phone && `· ${o.customer_phone}`}
               </p>
               <p>
-                <b>Vendedor:</b> {o.profiles?.full_name || "—"} ·{" "}
+                <b>Vendedor:</b> {o.seller_name || "—"} ·{" "}
                 <b>Entrega:</b> {fmtDate(o.delivery_date)}
               </p>
             </div>

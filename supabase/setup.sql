@@ -229,6 +229,25 @@ BEGIN
   RETURN v_status;
 END; $$;
 
+-- Nombres de vendedor para quien puede ver pedidos sin poder leer profiles.
+-- Solo expone (id, full_name) de vendedores de pedidos visibles.
+-- La condición replica la política "orders read": mantenerlas sincronizadas.
+CREATE FUNCTION public.order_seller_names()
+RETURNS TABLE (seller_id uuid, full_name text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT p.id, p.full_name
+    FROM public.profiles p
+   WHERE public.is_active_user()
+     AND EXISTS (
+       SELECT 1 FROM public.orders o
+        WHERE o.seller_id = p.id
+          AND (public.is_admin()
+               OR public.has_role('production') OR public.has_role('sales_production')
+               OR public.has_role('billing')    OR public.has_role('supervisor')
+               OR (public.has_role('seller') AND o.seller_id = (SELECT auth.uid())))
+     );
+$$;
+
 -- ---------------------------------------------------------------------
 -- 7. Row Level Security
 -- ---------------------------------------------------------------------
@@ -314,6 +333,7 @@ REVOKE ALL ON FUNCTION public.is_admin()              FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.my_roles()              FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.create_order(text,text,date,text,jsonb) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.set_order_item_status(uuid, public.production_status) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.order_seller_names()      FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.create_profile()          FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.guard_order_item_update() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.guard_profile_update()    FROM PUBLIC, anon, authenticated;
@@ -325,6 +345,7 @@ GRANT EXECUTE ON FUNCTION public.is_admin()       TO authenticated;
 GRANT EXECUTE ON FUNCTION public.my_roles()       TO authenticated;
 GRANT EXECUTE ON FUNCTION public.create_order(text,text,date,text,jsonb) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.set_order_item_status(uuid, public.production_status) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.order_seller_names() TO authenticated;
 
 COMMIT;
 
