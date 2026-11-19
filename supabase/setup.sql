@@ -63,6 +63,10 @@ CREATE TABLE public.orders (
   delivery_address text,        -- dirección de entrega (opcional)
   notes          text,
   wholesale      boolean NOT NULL DEFAULT false, -- cobrado a precio mayorista
+  payment_status text NOT NULL DEFAULT 'pending'     -- pending | partial | paid
+                 CHECK (payment_status IN ('pending', 'partial', 'paid')),
+  payment_method text CHECK (payment_method IN ('transfer', 'cash')), -- transferencia | efectivo
+  amount_paid    integer CHECK (amount_paid IS NULL OR amount_paid >= 0), -- abonado al crear
   created_at     timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX ON public.orders (seller_id, created_at DESC);
@@ -203,18 +207,23 @@ FOR EACH ROW EXECUTE FUNCTION public.guard_admin_role_delete();
 -- Precio mayorista si p_wholesale o si el pedido suma 10+ unidades; precios desde products.
 CREATE FUNCTION public.create_order(p_customer_name text, p_customer_phone text,
   p_delivery_date date, p_notes text, p_items jsonb, p_wholesale boolean DEFAULT false,
-  p_delivery_address text DEFAULT NULL, p_delivery_time time DEFAULT NULL)
+  p_delivery_address text DEFAULT NULL, p_delivery_time time DEFAULT NULL,
+  p_payment_status text DEFAULT 'pending', p_payment_method text DEFAULT NULL,
+  p_amount_paid integer DEFAULT NULL)
 RETURNS uuid LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 DECLARE
   c_wholesale_min_units constant integer := 10;  -- mantener igual que la app
   v_id uuid; v_item jsonb; v_qty integer; v_units integer := 0;
   v_wholesale boolean; v_price integer; v_price_wholesale integer;
+  v_unit integer; v_total integer := 0; v_paid integer;
+  v_status text := coalesce(p_payment_status, 'pending');
 BEGIN
   IF NOT public.is_active_user() THEN RAISE EXCEPTION 'Cuenta inactiva'; END IF;
   IF nullif(trim(p_customer_name),'') IS NULL THEN RAISE EXCEPTION 'Cliente requerido'; END IF;
   IF jsonb_typeof(p_items) IS DISTINCT FROM 'array' OR jsonb_array_length(p_items) = 0
   THEN RAISE EXCEPTION 'Agrega productos'; END IF;
 
+  -- 1) Unidades -> ¿precio mayorista?
   FOR v_item IN SELECT value FROM jsonb_array_elements(p_items) LOOP
     v_qty := (v_item->>'quantity')::integer;
     IF v_qty IS NULL OR v_qty <= 0 THEN RAISE EXCEPTION 'Cantidad inválida'; END IF;
@@ -222,18 +231,37 @@ BEGIN
   END LOOP;
   v_wholesale := coalesce(p_wholesale, false) OR v_units >= c_wholesale_min_units;
 
-  INSERT INTO public.orders (seller_id, customer_name, customer_phone, delivery_date,
-                             delivery_time, delivery_address, notes, wholesale)
-  VALUES ((SELECT auth.uid()), trim(p_customer_name), nullif(trim(p_customer_phone),''),
-          p_delivery_date, p_delivery_time, nullif(trim(p_delivery_address),''),
-          nullif(trim(p_notes),''), v_wholesale)
-  RETURNING id INTO v_id;
-
+  -- 2) Total con precios de la tabla products (valida que estén activos)
   FOR v_item IN SELECT value FROM jsonb_array_elements(p_items) LOOP
     SELECT price, price_wholesale INTO v_price, v_price_wholesale
       FROM public.products
      WHERE id = (v_item->>'product_id')::uuid AND active;
     IF NOT FOUND THEN RAISE EXCEPTION 'Producto no disponible'; END IF;
+    v_unit := CASE WHEN v_wholesale THEN coalesce(v_price_wholesale, v_price) ELSE v_price END;
+    v_total := v_total + coalesce(v_unit, 0) * (v_item->>'quantity')::integer;
+  END LOOP;
+
+  -- 3) Pago: medio obligatorio si hay pago; parcial con abono > 0 y < total
+  IF v_status NOT IN ('pending', 'partial', 'paid') THEN RAISE EXCEPTION 'Tipo de pago inválido'; END IF;
+  IF v_status <> 'pending' AND p_payment_method IS NULL THEN RAISE EXCEPTION 'Indica el medio de pago'; END IF;
+  IF v_status = 'partial' AND coalesce(p_amount_paid, 0) <= 0 THEN RAISE EXCEPTION 'Indica el valor abonado'; END IF;
+  IF v_status = 'partial' AND v_total > 0 AND p_amount_paid >= v_total
+  THEN RAISE EXCEPTION 'El abono debe ser menor al total; usa Pago completo'; END IF;
+  v_paid := CASE v_status WHEN 'paid' THEN v_total WHEN 'partial' THEN p_amount_paid ELSE 0 END;
+
+  -- 4) Pedido y productos (sin UPDATE posterior: RLS solo deja actualizar al admin)
+  INSERT INTO public.orders (seller_id, customer_name, customer_phone, delivery_date,
+                             delivery_time, delivery_address, notes, wholesale,
+                             payment_status, payment_method, amount_paid)
+  VALUES ((SELECT auth.uid()), trim(p_customer_name), nullif(trim(p_customer_phone),''),
+          p_delivery_date, p_delivery_time, nullif(trim(p_delivery_address),''),
+          nullif(trim(p_notes),''), v_wholesale,
+          v_status, CASE WHEN v_status = 'pending' THEN NULL ELSE p_payment_method END, v_paid)
+  RETURNING id INTO v_id;
+
+  FOR v_item IN SELECT value FROM jsonb_array_elements(p_items) LOOP
+    SELECT price, price_wholesale INTO v_price, v_price_wholesale
+      FROM public.products WHERE id = (v_item->>'product_id')::uuid;
     INSERT INTO public.order_items (order_id, product_id, quantity, notes, unit_price)
     VALUES (v_id, (v_item->>'product_id')::uuid, (v_item->>'quantity')::integer,
             nullif(trim(v_item->>'notes'),''),
@@ -360,7 +388,7 @@ REVOKE ALL ON FUNCTION public.is_active_user()        FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.has_role(text)          FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.is_admin()              FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.my_roles()              FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION public.create_order(text,text,date,text,jsonb,boolean,text,time) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.create_order(text,text,date,text,jsonb,boolean,text,time,text,text,integer) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.set_order_item_status(uuid, public.production_status) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.order_seller_names()      FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.create_profile()          FROM PUBLIC, anon, authenticated;
@@ -372,7 +400,7 @@ GRANT EXECUTE ON FUNCTION public.is_active_user() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.has_role(text)   TO authenticated;
 GRANT EXECUTE ON FUNCTION public.is_admin()       TO authenticated;
 GRANT EXECUTE ON FUNCTION public.my_roles()       TO authenticated;
-GRANT EXECUTE ON FUNCTION public.create_order(text,text,date,text,jsonb,boolean,text,time) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.create_order(text,text,date,text,jsonb,boolean,text,time,text,text,integer) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.set_order_item_status(uuid, public.production_status) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.order_seller_names() TO authenticated;
 

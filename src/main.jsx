@@ -52,6 +52,13 @@ const PRODUCT_BUCKET = "product-images";
 // Regla de negocio: desde estas unidades por pedido aplica precio mayorista.
 // Debe coincidir con c_wholesale_min_units en create_order (SQL).
 const WHOLESALE_MIN_UNITS = 10;
+// Deben coincidir con los CHECK de orders.payment_status / payment_method.
+const PAYMENT_STATUS = {
+  pending: "Pago pendiente",
+  partial: "Pago parcial",
+  paid: "Pago completo",
+};
+const PAYMENT_METHOD = { transfer: "Transferencia", cash: "Efectivo" };
 // Reduce la foto a máx. 1000 px y la pasa a WebP (JPEG si el navegador no
 // codifica WebP) para que el catálogo cargue rápido en el celular.
 async function resizeImage(file, max = 1000) {
@@ -341,7 +348,7 @@ function App() {
     }
     setBusy(false);
   }
-  async function createOrder(e, lines, wholesale) {
+  async function createOrder(e, lines, wholesale, payment) {
     e.preventDefault();
     setBusy(true);
     const f = new FormData(e.currentTarget);
@@ -358,6 +365,9 @@ function App() {
       p_wholesale: !!wholesale,
       p_delivery_address: f.get("delivery_address") || null,
       p_delivery_time: f.get("delivery_time") || null,
+      p_payment_status: payment?.status || "pending",
+      p_payment_method: payment?.method || null,
+      p_amount_paid: payment?.amount ?? null,
     });
     message(error, "Orden generada correctamente");
     if (!error) {
@@ -914,6 +924,9 @@ function OrderForm({ products, busy, onSubmit }) {
   const [query, setQuery] = useState("");
   const [lines, setLines] = useState([]);
   const [wholesaleChoice, setWholesaleChoice] = useState(false);
+  const [payStatus, setPayStatus] = useState("pending");
+  const [payMethod, setPayMethod] = useState("");
+  const [amountPaid, setAmountPaid] = useState("");
   const nextKey = useRef(0);
   // La barra inferior solo aparece mientras el total del pedido no se ve.
   const footRef = useRef(null);
@@ -968,13 +981,31 @@ function OrderForm({ products, busy, onSubmit }) {
     (s, l) => s + (unitPrice(byId.get(l.product_id)) || 0) * (Number(l.quantity) || 0),
     0,
   );
+  const paid = Number(amountPaid);
+  const payError =
+    payStatus === "partial" && amountPaid !== "" && total > 0 && paid >= total
+      ? "El abono debe ser menor al total. Si paga todo, usa Pago completo."
+      : "";
+  const payValid =
+    payStatus === "pending" ||
+    (payMethod &&
+      (payStatus === "paid" ||
+        (Number.isInteger(paid) && paid > 0 && !payError)));
   const valid =
+    payValid &&
     lines.length > 0 &&
     lines.every((l) => Number.isInteger(Number(l.quantity)) && Number(l.quantity) > 0);
   const scrollToCart = () =>
     footRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   return (
-    <form className="orderlayout" onSubmit={(e) => onSubmit(e, lines, wholesale)}>
+    <form className="orderlayout" onSubmit={(e) =>
+        onSubmit(e, lines, wholesale, {
+          status: payStatus,
+          method: payStatus === "pending" ? null : payMethod || null,
+          amount: payStatus === "partial" ? paid : null,
+        })
+      }
+    >
       <section className="panel catalog" aria-labelledby="catalog-title">
         <div className="catalog-head">
           <h2 id="catalog-title">Catálogo</h2>
@@ -1109,6 +1140,67 @@ function OrderForm({ products, busy, onSubmit }) {
               Observaciones generales
               <input name="notes" placeholder="Indicaciones del pedido" />
             </label>
+            <fieldset className="choicegroup">
+              <legend>Tipo de pago</legend>
+              <div className="choices">
+                {Object.entries(PAYMENT_STATUS).map(([v, l]) => (
+                  <label key={v} className={payStatus === v ? "on" : ""}>
+                    <input
+                      type="radio"
+                      name="payment_status"
+                      value={v}
+                      checked={payStatus === v}
+                      onChange={() => setPayStatus(v)}
+                    />
+                    {l}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            {payStatus !== "pending" && (
+              <fieldset className="choicegroup">
+                <legend>Medio de pago</legend>
+                <div className="choices">
+                  {Object.entries(PAYMENT_METHOD).map(([v, l]) => (
+                    <label key={v} className={payMethod === v ? "on" : ""}>
+                      <input
+                        type="radio"
+                        name="payment_method"
+                        value={v}
+                        required
+                        checked={payMethod === v}
+                        onChange={() => setPayMethod(v)}
+                      />
+                      {l}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            )}
+            {payStatus === "partial" && (
+              <label>
+                Valor abonado
+                <input
+                  name="amount_paid"
+                  type="number"
+                  min="1"
+                  step="100"
+                  inputMode="numeric"
+                  required
+                  placeholder="$ 0"
+                  value={amountPaid}
+                  onChange={(e) => setAmountPaid(e.target.value)}
+                  aria-invalid={!!payError}
+                  aria-describedby="amount-help"
+                />
+                <small id="amount-help" className={payError ? "fielderror" : "fieldhelp"}>
+                  {payError ||
+                    (total > 0 && paid > 0
+                      ? `Saldo pendiente: ${fmtMoney(total - paid)}`
+                      : "Lo que el cliente ya pagó.")}
+                </small>
+              </label>
+            )}
           </div>
         </section>
 
@@ -1300,6 +1392,15 @@ function Orders({ orders, admin, busy, changeStatus }) {
                   <b>Dirección:</b> {o.delivery_address}
                 </p>
               )}
+              <p>
+                <span className={"pill pay-" + (o.payment_status || "pending")}>
+                  {PAYMENT_STATUS[o.payment_status] || PAYMENT_STATUS.pending}
+                </span>
+                {o.payment_method && <> · {PAYMENT_METHOD[o.payment_method]}</>}
+                {o.payment_status === "partial" && o.amount_paid != null && (
+                  <> · Abonó {fmtMoney(o.amount_paid)}</>
+                )}
+              </p>
             </div>
             <small>{new Date(o.created_at).toLocaleString("es-CO")}</small>
           </div>
@@ -1370,6 +1471,20 @@ function Orders({ orders, admin, busy, changeStatus }) {
                     </td>
                     <td />
                   </tr>
+                  {o.payment_status === "partial" && o.amount_paid != null && (
+                    <tr>
+                      <td colSpan={3}>Saldo pendiente</td>
+                      <td className="num">
+                        {fmtMoney(
+                          o.order_items.reduce(
+                            (s, i) => s + (i.unit_price || 0) * i.quantity,
+                            0,
+                          ) - o.amount_paid,
+                        )}
+                      </td>
+                      <td />
+                    </tr>
+                  )}
                 </tfoot>
               )}
             </table>

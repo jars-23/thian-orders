@@ -914,6 +914,41 @@ tbody tr:last-child td { border-bottom: 0 }
     font-size: .72rem;
 }
 tfoot td { border-top: 2px solid var(--border); font-weight: 600 }
+
+/* Tipo y medio de pago */
+.choicegroup { margin: 0; padding: 0; border: 0; min-width: 0 }
+.choicegroup legend {
+    padding: 0;
+    margin-bottom: 6px;
+    font-size: .85rem;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+.choices { display: flex; flex-wrap: wrap; gap: 8px }
+.choices label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 40px;
+    padding: 8px 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: .85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color var(--ease), background-color var(--ease);
+}
+.choices label:hover { border-color: var(--primary) }
+.choices label.on { border-color: var(--primary); background: var(--primary-soft); color: var(--primary) }
+.choices input { width: 16px; height: 16px; min-height: 16px; margin: 0; accent-color: var(--primary) }
+.choices label:focus-within { box-shadow: var(--focus) }
+.fieldhelp, .fielderror { display: block; margin-top: 6px; font-size: .78rem; font-weight: 500 }
+.fielderror { color: var(--danger) }
+.pill.pay-pending { background: var(--warning-bg); color: var(--warning) }
+.pill.pay-partial { background: var(--info-bg); color: var(--info) }
+.pill.pay-paid { background: var(--success-bg); color: var(--success) }
 .cartsubmit {
     width: 100%;
     margin-top: 14px;
