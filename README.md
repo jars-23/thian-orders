@@ -1,7 +1,10 @@
 # Thian Orders — Gestión de pedidos y producción
 
 Aplicación interna de Thian Candle: React + Vite + Material UI + Supabase, publicada en GitHub Pages
-(`https://thian-candle.github.io/thian-report/`).
+(`https://jars-23.github.io/thian-orders/`).
+
+Repositorio: `https://github.com/jars-23/thian-orders` (copia de `thian-candle/thian-report`,
+que queda como `upstream`). Si cambia el nombre del repositorio, actualiza `base` en `vite.config.js`.
 
 - Inicio de sesión con **username y contraseña** (Edge Function `login-username`).
 - Usuarios con **varios roles**: `admin`, `seller`, `production`, `billing`, `supervisor`, `sales_production`.
@@ -48,7 +51,7 @@ Con Node.js instalado no hace falta instalar la CLI globalmente (`npx` la descar
 ```bash
 npx supabase login
 npx supabase link --project-ref TU_PROJECT_REF
-npx supabase secrets set ALLOWED_ORIGIN=https://thian-candle.github.io
+npx supabase secrets set ALLOWED_ORIGIN=https://jars-23.github.io
 npx supabase functions deploy login-username --no-verify-jwt
 npx supabase functions deploy create-user
 ```

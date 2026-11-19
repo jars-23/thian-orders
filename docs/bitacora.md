@@ -115,6 +115,12 @@ flowchart LR
 - `npm audit`: 2 vulnerabilidades (1 moderada, 1 alta) sin revisar.
 - `login-username` no tiene límite de intentos.
 
+### Migración del repositorio
+- El repositorio pasa a `jars-23/thian-orders` (público) y se publica desde ahí:
+  `https://jars-23.github.io/thian-orders/`.
+- `vite.config.js`: `base` cambia a `/thian-orders/`. `ALLOWED_ORIGIN` pasa a `https://jars-23.github.io`.
+- Remoto `origin` → `jars-23/thian-orders`; `upstream` → `thian-candle/thian-report`.
+
 ### Próximos pasos
 1. Crear el proyecto `thian-orders` en la región East US, con RLS automático activado y "Grant API access" desactivado.
 2. Ejecutar `setup.sql`, crear el primer administrador, desplegar las funciones y actualizar los secretos de GitHub.
