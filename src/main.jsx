@@ -914,124 +914,130 @@ function OrderForm({ products, busy, onSubmit }) {
   const valid =
     lines.length > 0 &&
     lines.every((l) => Number.isInteger(Number(l.quantity)) && Number(l.quantity) > 0);
+  const scrollToCart = () =>
+    document
+      .getElementById("order-side")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
   return (
-    <form onSubmit={(e) => onSubmit(e, lines)}>
-      <div className="panel">
-        <h2>Datos del pedido</h2>
-        <div className="formgrid">
-          <label>
-            Cliente
-            <input
-              name="customer_name"
-              required
-              placeholder="Nombre del cliente"
-              autoComplete="off"
-            />
-          </label>
-          <label>
-            Teléfono
-            <input
-              name="customer_phone"
-              type="tel"
-              inputMode="tel"
-              placeholder="Opcional"
-            />
-          </label>
-          <label>
-            Fecha de entrega
-            <input name="delivery_date" type="date" />
-          </label>
-          <label>
-            Observaciones generales
-            <input name="notes" placeholder="Indicaciones del pedido" />
-          </label>
+    <form className="orderlayout" onSubmit={(e) => onSubmit(e, lines)}>
+      <section className="panel catalog" aria-labelledby="catalog-title">
+        <div className="catalog-head">
+          <h2 id="catalog-title">Catálogo</h2>
+          <input
+            type="search"
+            className="catalog-search"
+            placeholder="Buscar producto"
+            aria-label="Buscar producto"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
         </div>
-      </div>
-
-      <div className="orderlayout">
-        <section className="panel catalog" aria-labelledby="catalog-title">
-          <div className="catalog-head">
-            <h2 id="catalog-title">Catálogo</h2>
-            <input
-              type="search"
-              className="catalog-search"
-              placeholder="Buscar producto"
-              aria-label="Buscar producto"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          </div>
-          <div className="chips" role="group" aria-label="Categorías">
-            {[["all", "Todas"], ...categories.map((c) => [c, c])].map(
-              ([id, label]) => (
-                <button
-                  type="button"
-                  key={id}
-                  className={"chip" + (cat === id ? " active" : "")}
-                  aria-pressed={cat === id}
-                  onClick={() => setCat(id)}
-                >
-                  {label}
-                </button>
-              ),
-            )}
-          </div>
-          {!products.length ? (
-            <p className="empty">
-              El administrador debe crear productos activos antes de registrar
-              pedidos.
-            </p>
-          ) : !visible.length ? (
-            <p className="empty">No hay productos que coincidan.</p>
-          ) : (
-            <div className="pgrid">
-              {visible.map((p) => {
-                const n = inCart(p.id);
-                return (
-                  <article
-                    className={"pcard" + (n ? " selected" : "")}
-                    key={p.id}
-                  >
-                    <div className="pcard-img">
-                      {p.image_url ? (
-                        <img
-                          src={p.image_url}
-                          alt={p.name}
-                          loading="lazy"
-                          width="300"
-                          height="300"
-                        />
-                      ) : (
-                        <Package size={36} aria-hidden="true" />
-                      )}
-                      {n > 0 && (
-                        <span className="pcard-badge">{n} en el pedido</span>
-                      )}
-                    </div>
-                    <div className="pcard-body">
-                      <small>{catOf(p)}</small>
-                      <h3>{p.name}</h3>
-                      {p.description && <p>{p.description}</p>}
-                      <div className="pcard-foot">
-                        <strong>{fmtMoney(p.price)}</strong>
-                        <button
-                          type="button"
-                          className="compact"
-                          onClick={() => add(p)}
-                          aria-label={`Agregar ${p.name}`}
-                        >
-                          <Plus size={16} aria-hidden="true" /> Agregar
-                        </button>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
+        <div className="chips" role="group" aria-label="Categorías">
+          {[["all", "Todas"], ...categories.map((c) => [c, c])].map(
+            ([id, label]) => (
+              <button
+                type="button"
+                key={id}
+                className={"chip" + (cat === id ? " active" : "")}
+                aria-pressed={cat === id}
+                onClick={() => setCat(id)}
+              >
+                {label}
+              </button>
+            ),
           )}
+        </div>
+        {!products.length ? (
+          <p className="empty">
+            El administrador debe crear productos activos antes de registrar
+            pedidos.
+          </p>
+        ) : !visible.length ? (
+          <p className="empty">No hay productos que coincidan.</p>
+        ) : (
+          <div className="pgrid">
+            {visible.map((p) => {
+              const n = inCart(p.id);
+              return (
+                <article
+                  className={"pcard" + (n ? " selected" : "")}
+                  key={p.id}
+                >
+                  <div className="pcard-img">
+                    {p.image_url ? (
+                      <img
+                        src={p.image_url}
+                        alt={p.name}
+                        loading="lazy"
+                        width="300"
+                        height="300"
+                      />
+                    ) : (
+                      <Package size={36} aria-hidden="true" />
+                    )}
+                    {n > 0 && (
+                      <span className="pcard-badge">{n} en el pedido</span>
+                    )}
+                  </div>
+                  <div className="pcard-body">
+                    <small>{catOf(p)}</small>
+                    <h3>{p.name}</h3>
+                    {p.description && <p>{p.description}</p>}
+                    <div className="pcard-foot">
+                      <strong>{fmtMoney(p.price)}</strong>
+                      <button
+                        type="button"
+                        className="compact"
+                        onClick={() => add(p)}
+                        aria-label={`Agregar ${p.name}`}
+                      >
+                        <Plus size={16} aria-hidden="true" /> Agregar
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <div className="orderside" id="order-side">
+        <section className="panel" aria-labelledby="customer-title">
+          <h2 id="customer-title">Datos del cliente</h2>
+          <div className="stackfields">
+            <label>
+              Cliente
+              <input
+                name="customer_name"
+                required
+                placeholder="Nombre del cliente"
+                autoComplete="off"
+              />
+            </label>
+            <div className="fieldpair">
+              <label>
+                Teléfono
+                <input
+                  name="customer_phone"
+                  type="tel"
+                  inputMode="tel"
+                  placeholder="Opcional"
+                />
+              </label>
+              <label>
+                Fecha de entrega
+                <input name="delivery_date" type="date" />
+              </label>
+            </div>
+            <label>
+              Observaciones generales
+              <input name="notes" placeholder="Indicaciones del pedido" />
+            </label>
+          </div>
         </section>
 
-        <aside className="panel cart" aria-labelledby="cart-title">
+        <section className="panel cart" aria-labelledby="cart-title">
           <h2 id="cart-title">
             <ShoppingCart size={18} aria-hidden="true" /> Pedido
             {units > 0 && <span className="cart-count">{units}</span>}
@@ -1044,19 +1050,25 @@ function OrderForm({ products, busy, onSubmit }) {
             <ul className="cartlist">
               {lines.map((l) => {
                 const p = byId.get(l.product_id);
+                const qty = Number(l.quantity) || 0;
                 return (
                   <li className="cartline" key={l.key}>
                     <div className="cartline-top">
                       <div className="cartthumb" aria-hidden="true">
                         {p?.image_url ? (
-                          <img src={p.image_url} alt="" width="44" height="44" />
+                          <img src={p.image_url} alt="" width="48" height="48" />
                         ) : (
                           <Package size={18} />
                         )}
                       </div>
                       <div className="cartinfo">
                         <b>{p?.name || "Producto"}</b>
-                        <small>{fmtMoney(p?.price)} c/u</small>
+                        <small>
+                          {fmtMoney(p?.price)} c/u
+                          {qty > 1 && p?.price != null && (
+                            <> · {fmtMoney(p.price * qty)}</>
+                          )}
+                        </small>
                       </div>
                       <button
                         type="button"
@@ -1072,9 +1084,9 @@ function OrderForm({ products, busy, onSubmit }) {
                         <button
                           type="button"
                           aria-label="Restar uno"
-                          disabled={Number(l.quantity) <= 1}
+                          disabled={qty <= 1}
                           onClick={() =>
-                            edit(l.key, "quantity", Math.max(1, Number(l.quantity) - 1))
+                            edit(l.key, "quantity", Math.max(1, qty - 1))
                           }
                         >
                           <Minus size={14} aria-hidden="true" />
@@ -1085,53 +1097,68 @@ function OrderForm({ products, busy, onSubmit }) {
                           step="1"
                           inputMode="numeric"
                           value={l.quantity}
-                          onChange={(e) => edit(l.key, "quantity", e.target.value)}
+                          onChange={(e) =>
+                            edit(l.key, "quantity", e.target.value)
+                          }
                           aria-label={`Cantidad de ${p?.name || "producto"}`}
                           required
                         />
                         <button
                           type="button"
                           aria-label="Sumar uno"
-                          onClick={() =>
-                            edit(l.key, "quantity", (Number(l.quantity) || 0) + 1)
-                          }
+                          onClick={() => edit(l.key, "quantity", qty + 1)}
                         >
                           <Plus size={14} aria-hidden="true" />
                         </button>
                       </div>
-                      <input
-                        className="cartnotes"
-                        placeholder="Personalización: nombres, deseos, color"
-                        aria-label={`Personalización de ${p?.name || "producto"}`}
-                        value={l.notes}
-                        onChange={(e) => edit(l.key, "notes", e.target.value)}
-                      />
+                      <button
+                        type="button"
+                        className="linkbtn"
+                        onClick={() =>
+                          setLines((ls) => [...ls, newLine(l.product_id)])
+                        }
+                      >
+                        + Otra personalización
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      className="linkbtn"
-                      onClick={() =>
-                        setLines((ls) => [...ls, newLine(l.product_id)])
-                      }
-                    >
-                      + Otra con distinta personalización
-                    </button>
+                    <input
+                      className="cartnotes"
+                      placeholder="Personalización: nombres, deseos, color"
+                      aria-label={`Personalización de ${p?.name || "producto"}`}
+                      value={l.notes}
+                      onChange={(e) => edit(l.key, "notes", e.target.value)}
+                    />
                   </li>
                 );
               })}
             </ul>
           )}
-          <div className="carttotal">
-            <span>Total estimado</span>
-            <strong>{fmtMoney(total)}</strong>
+          <div className="cartfoot">
+            <div className="carttotal">
+              <span>Total estimado</span>
+              <strong>{fmtMoney(total)}</strong>
+            </div>
+            <small className="carthint">Calculado con el precio general.</small>
+            <button className="cartsubmit" disabled={busy || !valid}>
+              {busy && <Loader2 size={16} className="spin" aria-hidden="true" />}
+              {busy ? "Guardando…" : "Guardar pedido"}
+            </button>
           </div>
-          <small className="carthint">Calculado con el precio general.</small>
-          <button className="cartsubmit" disabled={busy || !valid}>
-            {busy && <Loader2 size={16} className="spin" aria-hidden="true" />}
-            {busy ? "Guardando…" : "Guardar pedido"}
-          </button>
-        </aside>
+        </section>
       </div>
+
+      {/* Tableta y móvil: resumen fijo abajo para no perder el pedido de vista */}
+      {units > 0 && (
+        <div className="cartbar">
+          <span>
+            <b>{units}</b> {units === 1 ? "producto" : "productos"} ·{" "}
+            <b>{fmtMoney(total)}</b>
+          </span>
+          <button type="button" className="compact" onClick={scrollToCart}>
+            Ver pedido
+          </button>
+        </div>
+      )}
     </form>
   );
 }
