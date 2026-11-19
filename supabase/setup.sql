@@ -44,9 +44,12 @@ CREATE TABLE public.products (
   sku         text UNIQUE,
   description text,
   image_url   text,
+  price       integer CHECK (price IS NULL OR price >= 0), -- precio general en COP
+  category    text,
   active      boolean NOT NULL DEFAULT true,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX products_category_name_idx ON public.products (category, name);
 
 CREATE TABLE public.orders (
   id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),

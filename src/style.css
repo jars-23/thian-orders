@@ -372,6 +372,7 @@ th {
 }
 
 td { font-size: .92rem }
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap }
 tbody tr { transition: background-color var(--ease) }
 tbody tr:hover { background: var(--surface-muted) }
 tbody tr:last-child td { border-bottom: 0 }

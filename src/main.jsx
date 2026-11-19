@@ -24,6 +24,14 @@ const labels = {
 };
 const fmtDate = (d) =>
   d ? new Date(d + "T12:00:00").toLocaleDateString("es-CO") : "Sin fecha";
+const fmtMoney = (n) =>
+  n == null
+    ? "—"
+    : new Intl.NumberFormat("es-CO", {
+        style: "currency",
+        currency: "COP",
+        maximumFractionDigits: 0,
+      }).format(n);
 function App() {
   const [session, setSession] = useState(null),
     [profile, setProfile] = useState(null),
@@ -95,7 +103,11 @@ function App() {
     if (!profile?.active) return;
     setBusy(true);
     const [p, o, sn, s, r, ur] = await Promise.all([
-      supabase.from("products").select("*").order("name"),
+      supabase
+        .from("products")
+        .select("*")
+        .order("category", { nullsFirst: false })
+        .order("name"),
       supabase
         .from("orders")
         .select(
@@ -253,6 +265,8 @@ function App() {
       .insert({
         name: f.get("name").trim(),
         sku: f.get("sku")?.trim() || null,
+        category: f.get("category")?.trim() || null,
+        price: f.get("price") === "" ? null : Number(f.get("price")),
         description: f.get("description") || null,
         image_url: f.get("image_url") || null,
       });
@@ -479,6 +493,19 @@ function App() {
                   />
                   <input name="sku" placeholder="Referencia / SKU (opcional)" />
                   <input
+                    name="category"
+                    placeholder="Categoría / línea (opcional)"
+                  />
+                  <input
+                    name="price"
+                    type="number"
+                    min="0"
+                    step="100"
+                    inputMode="numeric"
+                    placeholder="Precio general (COP)"
+                    aria-label="Precio general en pesos"
+                  />
+                  <input
                     name="image_url"
                     type="url"
                     placeholder="URL de fotografía (opcional)"
@@ -493,7 +520,9 @@ function App() {
                 <thead>
                   <tr>
                     <th>Producto</th>
+                    <th>Categoría</th>
                     <th>Referencia</th>
+                    <th className="num">Precio</th>
                     <th>Estado</th>
                     {admin && <th>Acción</th>}
                   </tr>
@@ -502,7 +531,9 @@ function App() {
                   {products.map((p) => (
                     <tr key={p.id}>
                       <td>{p.name}</td>
+                      <td>{p.category || "—"}</td>
                       <td>{p.sku || "—"}</td>
+                      <td className="num">{fmtMoney(p.price)}</td>
                       <td>{p.active ? "Activo" : "Inactivo"}</td>
                       {admin && (
                         <td>
@@ -721,7 +752,7 @@ function OrderForm({ products, busy, onSubmit }) {
             <option value="">Selecciona producto</option>
             {products.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name}
+                {p.price != null ? `${p.name} — ${fmtMoney(p.price)}` : p.name}
               </option>
             ))}
           </select>
