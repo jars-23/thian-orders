@@ -12,7 +12,16 @@ const headers = {
   "Content-Type": "application/json",
   "Cache-Control": "no-store",
 };
-const failure = () => new Response(JSON.stringify({ error: "Credenciales inválidas" }), { status: 401, headers });
+// El cliente siempre recibe el mismo error genérico; el motivo real solo va a los logs del servidor.
+const failure = (reason: string, detail?: unknown) => {
+  console.error(`login-username: ${reason}`, detail ?? "");
+  return new Response(JSON.stringify({ error: "Credenciales inválidas" }), { status: 401, headers });
+};
+if (!projectUrl || !publicKey || !serviceKey) {
+  console.error("login-username: faltan variables de entorno", {
+    SUPABASE_URL: !!projectUrl, SUPABASE_ANON_KEY: !!publicKey, SUPABASE_SERVICE_ROLE_KEY: !!serviceKey,
+  });
+}
 
 serve(async (req) => {
   if (!origin || req.headers.get("origin") !== origin) {
@@ -23,27 +32,29 @@ serve(async (req) => {
   try {
     const { username, password } = await req.json();
     if (typeof username !== "string" || !/^[a-zA-Z0-9._]{4,20}$/.test(username) ||
-        typeof password !== "string" || !password || password.length > 1024) return failure();
+        typeof password !== "string" || !password || password.length > 1024) return failure("formato inválido");
 
     const admin = createClient(projectUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
     const { data: profile, error: lookupError } = await admin.from("profiles")
       .select("id,active").ilike("username", username).maybeSingle();
-    if (lookupError || !profile?.active) return failure();
+    if (lookupError) return failure("error consultando profiles", lookupError.message);
+    if (!profile) return failure("username no encontrado");
+    if (!profile.active) return failure("perfil inactivo");
 
     const { data: account, error: userError } = await admin.auth.admin.getUserById(profile.id);
-    if (userError || !account?.user?.email) return failure();
+    if (userError || !account?.user?.email) return failure("error leyendo auth.users", userError?.message);
 
     const authClient = createClient(projectUrl, publicKey, { auth: { persistSession: false, autoRefreshToken: false } });
     const { data: signed, error: signError } = await authClient.auth.signInWithPassword({
       email: account.user.email, password,
     });
-    if (signError || !signed.session) return failure();
+    if (signError || !signed.session) return failure("signInWithPassword falló", signError?.message);
 
     return new Response(JSON.stringify({
       access_token: signed.session.access_token,
       refresh_token: signed.session.refresh_token,
     }), { status: 200, headers });
-  } catch {
-    return failure();
+  } catch (e) {
+    return failure("excepción", e instanceof Error ? e.message : String(e));
   }
 });

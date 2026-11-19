@@ -31,10 +31,12 @@ export const theme = createTheme({
   palette: {
     mode: "light",
 
+    // main oscurecido para que el texto blanco cumpla 4.5:1 (el naranja del
+    // logo, #F4752D, solo llega a 2.8:1). El logo y los acentos siguen en #F4752D.
     primary: {
-      main: "#F4752D",
-      light: "#FFB52E",
-      dark: "#DC3D22",
+      main: "#BF5219",
+      light: "#F4752D",
+      dark: "#A3440F",
       contrastText: "#FFFFFF",
     },
 

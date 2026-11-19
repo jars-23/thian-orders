@@ -342,13 +342,21 @@ function App() {
     <div className="shell">
       <aside>
         <div className="brand">
-          🕯️ Thian Candle<small>Control de pedidos</small>
+          <img
+            src={`${import.meta.env.BASE_URL}logo-thian.png`}
+            alt=""
+            width="40"
+            height="40"
+          />
+          <div>
+            Thian Candle<small>Pedidos y producción</small>
+          </div>
         </div>
         <div className="identity">
           {profile.full_name}
           <small>{roles.join(" · ") || "Sin roles"}</small>
         </div>
-        <nav>
+        <nav aria-label="Navegación principal">
           {[
             ["dashboard", LayoutDashboard, "Resumen"],
             ["orders", ShoppingBag, "Pedidos"],
@@ -359,6 +367,7 @@ function App() {
             <button
               key={id}
               className={tab === id ? "selected" : ""}
+              aria-current={tab === id ? "page" : undefined}
               onClick={() => {
                 setTab(id);
                 setError("");
@@ -370,7 +379,11 @@ function App() {
             </button>
           ))}
         </nav>
-        <button className="logout" onClick={() => supabase.auth.signOut()}>
+        <button
+          className="logout"
+          aria-label="Cerrar sesión"
+          onClick={() => supabase.auth.signOut()}
+        >
           <LogOut size={17} /> Salir
         </button>
       </aside>

@@ -121,6 +121,20 @@ flowchart LR
 - `vite.config.js`: `base` cambia a `/thian-orders/`. `ALLOWED_ORIGIN` pasa a `https://jars-23.github.io`.
 - Remoto `origin` → `jars-23/thian-orders`; `upstream` → `thian-candle/thian-report`.
 
+### Puesta en marcha (2026-11-18)
+| Paso | Estado |
+|---|---|
+| Proyecto Supabase `thian-orders` (`cvqzfotbawqxcpepgqxn`) en THIAN-ORG | ✅ |
+| `setup.sql` ejecutado: 6 tablas, 6 roles, 15 políticas, 0 tablas sin RLS | ✅ |
+| Registro público desactivado | ✅ |
+| Primer administrador creado (`admin` + `seller`) | ✅ |
+| Secretos `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` (clave publishable) en GitHub | ✅ |
+| GitHub Pages activo: `https://jars-23.github.io/thian-orders/` | ✅ |
+| `ALLOWED_ORIGIN=https://jars-23.github.io`, `login-username` y `create-user` desplegadas | ✅ |
+| Inicio de sesión del administrador en la app publicada | ✅ (la contraseña guardada no coincidía; se fijó por SQL con `extensions.crypt` y se verificó) |
+| `login-username` con logs de diagnóstico por paso (respuesta al cliente sigue siendo genérica) | ✅ redesplegada |
+| Pruebas por rol (seller, production, sales_production, billing, supervisor) | ⏳ |
+
 ### Próximos pasos
 1. Crear el proyecto `thian-orders` en la región East US, con RLS automático activado y "Grant API access" desactivado.
 2. Ejecutar `setup.sql`, crear el primer administrador, desplegar las funciones y actualizar los secretos de GitHub.
