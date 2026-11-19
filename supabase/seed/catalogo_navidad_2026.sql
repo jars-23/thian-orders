@@ -1,8 +1,8 @@
 -- =====================================================================
 -- Carga de productos — Catálogo Mayorista Navideño 2026 (Thian Candle)
--- Requiere la migración 20261118b_product_price_category.sql.
+-- Requiere las migraciones 20261118b (precio/categoría) y 20261119 (mayorista).
 -- Precio = "Precio al Público / Precio General" del catálogo, en COP.
--- (El precio mayorista va en el comentario de cada línea, solo como referencia.)
+-- El precio mayorista se carga al final (price_wholesale).
 --
 -- Se puede ejecutar más de una vez: si la referencia (sku) ya existe,
 -- actualiza nombre, descripción, precio y categoría en vez de duplicar.
@@ -53,6 +53,19 @@ INSERT INTO public.products (sku, name, category, price, description) VALUES
 ON CONFLICT (sku) DO UPDATE
   SET name = EXCLUDED.name, category = EXCLUDED.category,
       price = EXCLUDED.price, description = EXCLUDED.description;
+
+-- Precios mayoristas del Catálogo Mayorista Navideño 2026 (por referencia)
+UPDATE public.products p SET price_wholesale = v.w
+FROM (VALUES
+  ('NAV26-01',25000),('NAV26-02',25000),('NAV26-03',18000),('NAV26-04',24000),
+  ('NAV26-05', 9500),('NAV26-06', 9000),('NAV26-07',18000),('NAV26-08',17000),
+  ('NAV26-09',20000),('NAV26-10',10000),('NAV26-11',10000),('NAV26-12', 6500),
+  ('NAV26-13',35000),('NAV26-14',19000),('NAV26-15',10000),('NAV26-16',10000),
+  ('NAV26-17',13500),('NAV26-18',13500),('NAV26-19',13500),('NAV26-20',17000),
+  ('NAV26-21',17000),('NAV26-22',17000),('NAV26-23',17000),('NAV26-24',12000),
+  ('NAV26-25',10000),('NAV26-26',10000),('NAV26-27',33000)
+) AS v(sku, w)
+WHERE p.sku = v.sku;
 
 COMMIT;
 

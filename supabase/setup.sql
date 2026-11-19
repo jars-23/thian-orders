@@ -45,6 +45,7 @@ CREATE TABLE public.products (
   description text,
   image_url   text,
   price       integer CHECK (price IS NULL OR price >= 0), -- precio general en COP
+  price_wholesale integer CHECK (price_wholesale IS NULL OR price_wholesale >= 0), -- mayorista
   category    text,
   active      boolean NOT NULL DEFAULT true,
   created_at  timestamptz NOT NULL DEFAULT now()
@@ -59,6 +60,7 @@ CREATE TABLE public.orders (
   customer_phone text,
   delivery_date  date,
   notes          text,
+  wholesale      boolean NOT NULL DEFAULT false, -- cobrado a precio mayorista
   created_at     timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX ON public.orders (seller_id, created_at DESC);
@@ -71,6 +73,7 @@ CREATE TABLE public.order_items (
   quantity   integer NOT NULL CHECK (quantity > 0),
   status     public.production_status NOT NULL DEFAULT 'pending',
   notes      text,
+  unit_price integer CHECK (unit_price IS NULL OR unit_price >= 0), -- precio aplicado al crear
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX ON public.order_items (order_id);
@@ -151,7 +154,8 @@ BEGIN
   IF NOT public.is_admin() AND (SELECT auth.uid()) IS NOT NULL AND (
      NEW.id IS DISTINCT FROM OLD.id OR NEW.order_id IS DISTINCT FROM OLD.order_id OR
      NEW.product_id IS DISTINCT FROM OLD.product_id OR NEW.quantity IS DISTINCT FROM OLD.quantity OR
-     NEW.notes IS DISTINCT FROM OLD.notes OR NEW.created_at IS DISTINCT FROM OLD.created_at)
+     NEW.notes IS DISTINCT FROM OLD.notes OR NEW.unit_price IS DISTINCT FROM OLD.unit_price OR
+     NEW.created_at IS DISTINCT FROM OLD.created_at)
   THEN RAISE EXCEPTION 'Producción solo puede modificar el estado'; END IF;
   RETURN NEW;
 END; $$;
@@ -194,28 +198,45 @@ FOR EACH ROW EXECUTE FUNCTION public.guard_admin_role_delete();
 -- 6. RPC de negocio
 -- ---------------------------------------------------------------------
 -- Pedido + productos de forma atómica. SECURITY INVOKER: aplica RLS del usuario.
+-- Precio mayorista si p_wholesale o si el pedido suma 10+ unidades; precios desde products.
 CREATE FUNCTION public.create_order(p_customer_name text, p_customer_phone text,
-  p_delivery_date date, p_notes text, p_items jsonb)
+  p_delivery_date date, p_notes text, p_items jsonb, p_wholesale boolean DEFAULT false)
 RETURNS uuid LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
-DECLARE v_id uuid; v_item jsonb;
+DECLARE
+  c_wholesale_min_units constant integer := 10;  -- mantener igual que la app
+  v_id uuid; v_item jsonb; v_qty integer; v_units integer := 0;
+  v_wholesale boolean; v_price integer; v_price_wholesale integer;
 BEGIN
   IF NOT public.is_active_user() THEN RAISE EXCEPTION 'Cuenta inactiva'; END IF;
   IF nullif(trim(p_customer_name),'') IS NULL THEN RAISE EXCEPTION 'Cliente requerido'; END IF;
   IF jsonb_typeof(p_items) IS DISTINCT FROM 'array' OR jsonb_array_length(p_items) = 0
   THEN RAISE EXCEPTION 'Agrega productos'; END IF;
-  INSERT INTO public.orders (seller_id, customer_name, customer_phone, delivery_date, notes)
-  VALUES ((SELECT auth.uid()), trim(p_customer_name), nullif(trim(p_customer_phone),''),
-          p_delivery_date, nullif(trim(p_notes),''))
-  RETURNING id INTO v_id;
+
   FOR v_item IN SELECT value FROM jsonb_array_elements(p_items) LOOP
-    IF NOT EXISTS (SELECT 1 FROM public.products WHERE id = (v_item->>'product_id')::uuid AND active)
-    THEN RAISE EXCEPTION 'Producto no disponible'; END IF;
-    INSERT INTO public.order_items (order_id, product_id, quantity, notes)
+    v_qty := (v_item->>'quantity')::integer;
+    IF v_qty IS NULL OR v_qty <= 0 THEN RAISE EXCEPTION 'Cantidad inválida'; END IF;
+    v_units := v_units + v_qty;
+  END LOOP;
+  v_wholesale := coalesce(p_wholesale, false) OR v_units >= c_wholesale_min_units;
+
+  INSERT INTO public.orders (seller_id, customer_name, customer_phone, delivery_date, notes, wholesale)
+  VALUES ((SELECT auth.uid()), trim(p_customer_name), nullif(trim(p_customer_phone),''),
+          p_delivery_date, nullif(trim(p_notes),''), v_wholesale)
+  RETURNING id INTO v_id;
+
+  FOR v_item IN SELECT value FROM jsonb_array_elements(p_items) LOOP
+    SELECT price, price_wholesale INTO v_price, v_price_wholesale
+      FROM public.products
+     WHERE id = (v_item->>'product_id')::uuid AND active;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Producto no disponible'; END IF;
+    INSERT INTO public.order_items (order_id, product_id, quantity, notes, unit_price)
     VALUES (v_id, (v_item->>'product_id')::uuid, (v_item->>'quantity')::integer,
-            nullif(trim(v_item->>'notes'),''));
+            nullif(trim(v_item->>'notes'),''),
+            CASE WHEN v_wholesale THEN coalesce(v_price_wholesale, v_price) ELSE v_price END);
   END LOOP;
   RETURN v_id;
 END; $$;
+
 
 -- Cambio de estado de producción: solo modifica status; valida el rol explícitamente.
 CREATE FUNCTION public.set_order_item_status(p_item_id uuid, p_status public.production_status)
@@ -334,7 +355,7 @@ REVOKE ALL ON FUNCTION public.is_active_user()        FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.has_role(text)          FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.is_admin()              FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.my_roles()              FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION public.create_order(text,text,date,text,jsonb) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.create_order(text,text,date,text,jsonb,boolean) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.set_order_item_status(uuid, public.production_status) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.order_seller_names()      FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.create_profile()          FROM PUBLIC, anon, authenticated;
@@ -346,7 +367,7 @@ GRANT EXECUTE ON FUNCTION public.is_active_user() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.has_role(text)   TO authenticated;
 GRANT EXECUTE ON FUNCTION public.is_admin()       TO authenticated;
 GRANT EXECUTE ON FUNCTION public.my_roles()       TO authenticated;
-GRANT EXECUTE ON FUNCTION public.create_order(text,text,date,text,jsonb) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.create_order(text,text,date,text,jsonb,boolean) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.set_order_item_status(uuid, public.production_status) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.order_seller_names() TO authenticated;
 

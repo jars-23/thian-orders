@@ -15,7 +15,8 @@ import {
   ImagePlus,
   Loader2,
   PanelLeftClose,
-  PanelLeftOpen,
+  Pin,
+  UserRound,
 } from "lucide-react";
 import "./style.css";
 import { ThemeProvider, CssBaseline } from "@mui/material";
@@ -40,6 +41,9 @@ const fmtMoney = (n) =>
         maximumFractionDigits: 0,
       }).format(n);
 const PRODUCT_BUCKET = "product-images";
+// Regla de negocio: desde estas unidades por pedido aplica precio mayorista.
+// Debe coincidir con c_wholesale_min_units en create_order (SQL).
+const WHOLESALE_MIN_UNITS = 10;
 // Reduce la foto a máx. 1000 px y la pasa a WebP (JPEG si el navegador no
 // codifica WebP) para que el catálogo cargue rápido en el celular.
 async function resizeImage(file, max = 1000) {
@@ -76,21 +80,26 @@ function App() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [notice, setNotice] = useState("");
-  // Menú lateral colapsado (solo escritorio); se recuerda en este navegador.
-  const [navCollapsed, setNavCollapsed] = useState(() => {
+  // Menú lateral (escritorio): por defecto se oculta solo y se abre al pasar
+  // el mouse o con el teclado. "Fijar" lo deja abierto; se recuerda aquí.
+  const [roleNames, setRoleNames] = useState([]);
+  const [navPinned, setNavPinned] = useState(() => {
     try {
-      return localStorage.getItem("thian.navCollapsed") === "1";
+      return localStorage.getItem("thian.navPinned") === "1";
     } catch {
       return false;
     }
   });
+  const [navPeek, setNavPeek] = useState(false);
+  const navCollapsed = !navPinned && !navPeek;
   const toggleNav = () =>
-    setNavCollapsed((v) => {
+    setNavPinned((v) => {
       try {
-        localStorage.setItem("thian.navCollapsed", v ? "0" : "1");
+        localStorage.setItem("thian.navPinned", v ? "0" : "1");
       } catch {
         /* sin almacenamiento: solo dura la sesión */
       }
+      setNavPeek(false);
       return !v;
     });
   const hasRole = (...codes) => codes.some((c) => roles.includes(c));
@@ -137,6 +146,7 @@ function App() {
             supabase.rpc("my_roles").then(({ data: rs, error: re }) => {
               if (active) {
                 setRoles((rs || []).map((x) => x.code));
+                setRoleNames((rs || []).map((x) => x.name));
                 if (re) setError(re.message);
               }
             });
@@ -158,7 +168,7 @@ function App() {
       supabase
         .from("orders")
         .select(
-          "*,order_items(id,product_id,quantity,status,notes,products(name))",
+          "*,order_items(id,product_id,quantity,status,notes,unit_price,products(name))",
         )
         .order("created_at", { ascending: false }),
       // profiles solo es legible por el propio usuario o admin; esta RPC
@@ -314,6 +324,8 @@ function App() {
         sku: f.get("sku")?.trim() || null,
         category: f.get("category")?.trim() || null,
         price: f.get("price") === "" ? null : Number(f.get("price")),
+        price_wholesale:
+          f.get("price_wholesale") === "" ? null : Number(f.get("price_wholesale")),
         description: f.get("description") || null,
         image_url: f.get("image_url") || null,
       });
@@ -324,7 +336,7 @@ function App() {
     }
     setBusy(false);
   }
-  async function createOrder(e, lines) {
+  async function createOrder(e, lines, wholesale) {
     e.preventDefault();
     setBusy(true);
     const f = new FormData(e.currentTarget);
@@ -338,8 +350,9 @@ function App() {
         quantity: Number(x.quantity),
         notes: x.notes || "",
       })),
+      p_wholesale: !!wholesale,
     });
-    message(error, "Pedido registrado correctamente");
+    message(error, "Orden generada correctamente");
     if (!error) {
       setTab("orders");
       await reload();
@@ -438,9 +451,24 @@ function App() {
     );
   const counts = { pending: 0, in_progress: 0, finished: 0 };
   orders.forEach((o) => o.order_items?.forEach((i) => counts[i.status]++));
+  const initials =
+    (profile.full_name || "?")
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0].toUpperCase())
+      .join("") || "?";
   return (
     <div className="shell">
-      <aside className={navCollapsed ? "collapsed" : ""}>
+      <aside
+        className={navPinned ? "" : navPeek ? "overlay" : "collapsed"}
+        onMouseEnter={() => !navPinned && setNavPeek(true)}
+        onMouseLeave={() => setNavPeek(false)}
+        onFocus={() => !navPinned && setNavPeek(true)}
+        onBlur={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget)) setNavPeek(false);
+        }}
+      >
         <div className="brand">
           {/* Menú abierto: firma. Menú colapsado y móvil: ícono. */}
           <img
@@ -455,40 +483,43 @@ function App() {
               className="logo-firma"
               src={`${import.meta.env.BASE_URL}logo-firma.webp`}
               alt="Thian Candle"
-              width="160"
-              height="30"
+              width="200"
+              height="38"
             />
           </div>
           <button
             type="button"
             className="navtoggle"
             onClick={toggleNav}
-            aria-expanded={!navCollapsed}
-            aria-label={navCollapsed ? "Mostrar menú" : "Ocultar menú"}
-            title={navCollapsed ? "Mostrar menú" : "Ocultar menú"}
+            aria-pressed={navPinned}
+            aria-label={navPinned ? "Ocultar menú automáticamente" : "Fijar menú abierto"}
+            title={navPinned ? "Ocultar menú automáticamente" : "Fijar menú abierto"}
           >
-            {navCollapsed ? (
-              <PanelLeftOpen size={18} aria-hidden="true" />
-            ) : (
+            {navPinned ? (
               <PanelLeftClose size={18} aria-hidden="true" />
+            ) : (
+              <Pin size={16} aria-hidden="true" />
             )}
           </button>
         </div>
         <div
           className="avatar"
           aria-hidden="true"
-          title={`${profile.full_name} · ${roles.join(" · ")}`}
+          title={`${profile.full_name} · ${roleNames.join(" · ")}`}
         >
-          {(profile.full_name || "?")
-            .split(/\s+/)
-            .filter(Boolean)
-            .slice(0, 2)
-            .map((w) => w[0].toUpperCase())
-            .join("")}
+          {initials}
         </div>
         <div className="identity">
-          {profile.full_name}
-          <small>{roles.join(" · ") || "Sin roles"}</small>
+          <span className="idavatar" aria-hidden="true">
+            {initials}
+          </span>
+          <div className="idtext">
+            <b>{profile.full_name}</b>
+            <small>
+              <UserRound size={13} aria-hidden="true" />
+              {roleNames.join(" · ") || "Sin roles"}
+            </small>
+          </div>
         </div>
         <nav aria-label="Navegación principal">
           {[
@@ -507,6 +538,7 @@ function App() {
                 setTab(id);
                 setError("");
                 setNotice("");
+                setNavPeek(false);
               }}
             >
               <Icon size={18} aria-hidden="true" />
@@ -615,6 +647,15 @@ function App() {
                     aria-label="Precio general en pesos"
                   />
                   <input
+                    name="price_wholesale"
+                    type="number"
+                    min="0"
+                    step="100"
+                    inputMode="numeric"
+                    placeholder="Precio mayorista (COP)"
+                    aria-label="Precio mayorista en pesos"
+                  />
+                  <input
                     name="image_url"
                     type="url"
                     placeholder="URL de fotografía (opcional)"
@@ -632,6 +673,7 @@ function App() {
                     <th>Categoría</th>
                     <th>Referencia</th>
                     <th className="num">Precio</th>
+                    <th className="num">Mayorista</th>
                     <th>Estado</th>
                     {admin && <th>Acción</th>}
                   </tr>
@@ -660,6 +702,7 @@ function App() {
                       <td>{p.category || "—"}</td>
                       <td>{p.sku || "—"}</td>
                       <td className="num">{fmtMoney(p.price)}</td>
+                      <td className="num">{fmtMoney(p.price_wholesale)}</td>
                       <td>{p.active ? "Activo" : "Inactivo"}</td>
                       {admin && (
                         <td>
@@ -871,6 +914,7 @@ function OrderForm({ products, busy, onSubmit }) {
   const [cat, setCat] = useState("all");
   const [query, setQuery] = useState("");
   const [lines, setLines] = useState([]);
+  const [wholesaleChoice, setWholesaleChoice] = useState(false);
   const nextKey = useRef(0);
   // La barra inferior solo aparece mientras el total del pedido no se ve.
   const footRef = useRef(null);
@@ -917,8 +961,12 @@ function OrderForm({ products, busy, onSubmit }) {
       .filter((l) => l.product_id === id)
       .reduce((s, l) => s + (Number(l.quantity) || 0), 0);
   const units = lines.reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+  const wholesaleAuto = units >= WHOLESALE_MIN_UNITS;
+  const wholesale = wholesaleAuto || wholesaleChoice;
+  const unitPrice = (p) =>
+    p ? (wholesale ? (p.price_wholesale ?? p.price) : p.price) : null;
   const total = lines.reduce(
-    (s, l) => s + (byId.get(l.product_id)?.price || 0) * (Number(l.quantity) || 0),
+    (s, l) => s + (unitPrice(byId.get(l.product_id)) || 0) * (Number(l.quantity) || 0),
     0,
   );
   const valid =
@@ -927,7 +975,7 @@ function OrderForm({ products, busy, onSubmit }) {
   const scrollToCart = () =>
     footRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   return (
-    <form className="orderlayout" onSubmit={(e) => onSubmit(e, lines)}>
+    <form className="orderlayout" onSubmit={(e) => onSubmit(e, lines, wholesale)}>
       <section className="panel catalog" aria-labelledby="catalog-title">
         <div className="catalog-head">
           <h2 id="catalog-title">Catálogo</h2>
@@ -992,7 +1040,14 @@ function OrderForm({ products, busy, onSubmit }) {
                     <h3>{p.name}</h3>
                     {p.description && <p>{p.description}</p>}
                     <div className="pcard-foot">
-                      <strong>{fmtMoney(p.price)}</strong>
+                      <div className="pcard-prices">
+                        <strong>{fmtMoney(wholesale ? (p.price_wholesale ?? p.price) : p.price)}</strong>
+                        {p.price_wholesale != null && (
+                          <small>
+                            {wholesale ? "General " + fmtMoney(p.price) : "Mayorista " + fmtMoney(p.price_wholesale)}
+                          </small>
+                        )}
+                      </div>
                       <button
                         type="button"
                         className="compact"
@@ -1072,9 +1127,9 @@ function OrderForm({ products, busy, onSubmit }) {
                       <div className="cartinfo">
                         <b>{p?.name || "Producto"}</b>
                         <small>
-                          {fmtMoney(p?.price)} c/u
-                          {qty > 1 && p?.price != null && (
-                            <> · {fmtMoney(p.price * qty)}</>
+                          {fmtMoney(unitPrice(p))} c/u
+                          {qty > 1 && unitPrice(p) != null && (
+                            <> · {fmtMoney(unitPrice(p) * qty)}</>
                           )}
                         </small>
                       </div>
@@ -1142,14 +1197,32 @@ function OrderForm({ products, busy, onSubmit }) {
             </ul>
           )}
           <div className="cartfoot" ref={footRef}>
+            <label className={"wholesale" + (wholesale ? " on" : "")}>
+              <input
+                type="checkbox"
+                checked={wholesale}
+                disabled={wholesaleAuto}
+                onChange={(e) => setWholesaleChoice(e.target.checked)}
+              />
+              <span>
+                <b>Aplicar precio mayorista</b>
+                <small>
+                  {wholesaleAuto
+                    ? `Automático: el pedido tiene ${WHOLESALE_MIN_UNITS} unidades o más.`
+                    : `Se aplica automáticamente desde ${WHOLESALE_MIN_UNITS} unidades.`}
+                </small>
+              </span>
+            </label>
             <div className="carttotal">
               <span>Total estimado</span>
               <strong>{fmtMoney(total)}</strong>
             </div>
-            <small className="carthint">Calculado con el precio general.</small>
+            <small className="carthint">
+              Calculado con el precio {wholesale ? "mayorista" : "general"}.
+            </small>
             <button className="cartsubmit" disabled={busy || !valid}>
               {busy && <Loader2 size={16} className="spin" aria-hidden="true" />}
-              {busy ? "Guardando…" : "Guardar pedido"}
+              {busy ? "Generando…" : "Generar orden"}
             </button>
           </div>
         </section>
@@ -1197,7 +1270,10 @@ function Orders({ orders, admin, busy, changeStatus }) {
         <article className="panel order" key={o.id}>
           <div className="orderhead">
             <div>
-              <h2>Pedido #{o.order_number}</h2>
+              <h2>
+                Pedido #{o.order_number}
+                {o.wholesale && <span className="pill wholesale-pill">Precio mayorista</span>}
+              </h2>
               <p>
                 <b>Cliente:</b> {o.customer_name}{" "}
                 {o.customer_phone && `· ${o.customer_phone}`}
@@ -1219,7 +1295,9 @@ function Orders({ orders, admin, busy, changeStatus }) {
               <thead>
                 <tr>
                   <th>Producto</th>
-                  <th>Cantidad</th>
+                  <th className="num">Cantidad</th>
+                  <th className="num">Precio</th>
+                  <th className="num">Subtotal</th>
                   <th>Estado</th>
                 </tr>
               </thead>
@@ -1230,7 +1308,11 @@ function Orders({ orders, admin, busy, changeStatus }) {
                       {i.products?.name || "Producto"}
                       {i.notes && <small className="subnote">{i.notes}</small>}
                     </td>
-                    <td>{i.quantity}</td>
+                    <td className="num">{i.quantity}</td>
+                    <td className="num">{fmtMoney(i.unit_price)}</td>
+                    <td className="num">
+                      {i.unit_price == null ? "—" : fmtMoney(i.unit_price * i.quantity)}
+                    </td>
                     <td>
                       {admin ? (
                         <select
@@ -1254,6 +1336,24 @@ function Orders({ orders, admin, busy, changeStatus }) {
                   </tr>
                 ))}
               </tbody>
+              {o.order_items?.some((i) => i.unit_price != null) && (
+                <tfoot>
+                  <tr>
+                    <td colSpan={3}>Total</td>
+                    <td className="num">
+                      <b>
+                        {fmtMoney(
+                          o.order_items.reduce(
+                            (s, i) => s + (i.unit_price || 0) * i.quantity,
+                            0,
+                          ),
+                        )}
+                      </b>
+                    </td>
+                    <td />
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </article>

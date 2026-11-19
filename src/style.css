@@ -207,14 +207,68 @@ aside {
     color: var(--text-on-dark-muted);
 }
 
+/* Tarjeta de usuario: iniciales, nombre y roles en español */
 .identity {
-    padding: 12px;
-    background: var(--sidebar-hover);
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 12px 12px 14px;
+    background: linear-gradient(135deg, #4A2E1C 0%, #3A2415 60%, #2E1C11 100%);
+    border: 1px solid rgba(244, 117, 45, .18);
+    border-left: 3px solid var(--brand-orange);
     border-radius: var(--radius);
-    font-weight: 600;
+    overflow: hidden;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, .18);
+}
+.identity::after {               /* ícono de la marca como marca de agua */
+    content: "";
+    position: absolute;
+    right: -10px;
+    bottom: -12px;
+    width: 72px;
+    height: 72px;
+    background: url("/logo-icono.webp") center / contain no-repeat;
+    opacity: .08;
+    pointer-events: none;
+}
+.idavatar {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 25%, #FFB35C 0%, #F4752D 45%, #BF5219 100%);
+    color: #FFFFFF;
+    font-weight: 700;
     font-size: .9rem;
+    letter-spacing: .02em;
+    box-shadow: 0 0 0 2px rgba(255, 196, 140, .45), 0 4px 10px rgba(0, 0, 0, .3);
+}
+.idtext {
+    position: relative;
+    z-index: 1;
+    min-width: 0;
+    padding-left: 12px;
+    border-left: 1px solid rgba(245, 237, 230, .14);
+}
+.idtext b {
+    display: block;
+    color: #FFFFFF;
+    font-size: .92rem;
+    line-height: 1.25;
     overflow-wrap: anywhere;
 }
+.idtext small {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 4px;
+    font-size: .74rem;
+    color: var(--text-on-dark-muted);
+}
+.idtext small svg { flex: none; color: var(--brand-orange) }
 
 nav { display: grid; gap: 4px }
 
@@ -255,14 +309,24 @@ nav button.selected svg { color: var(--brand-orange) }
     padding-top: 14px;
 }
 
-/* ---------- Menú lateral colapsable ---------- */
-aside { transition: width 200ms ease, padding 200ms ease }
-.brandtext { flex: 1; min-width: 0 }
+/* ---------- Menú lateral: se oculta solo ---------- */
+aside { transition: width 200ms ease, padding 200ms ease, box-shadow 200ms ease; z-index: 40 }
+.brand { position: relative }
+.brandtext { flex: 1; min-width: 0; display: flex; justify-content: center; padding: 18px 0 2px }
+
+/* Abierto al pasar el mouse: se superpone al contenido sin moverlo */
+aside.overlay {
+    margin-right: -172px;           /* 248 px de menú − 76 px de la barra */
+    box-shadow: 12px 0 32px rgba(43, 29, 20, .28);
+}
 
 .navtoggle {
+    position: absolute;
+    top: -14px;
+    right: -6px;
     flex: none;
-    width: 34px;
-    min-height: 34px;
+    width: 30px;
+    min-height: 30px;
     padding: 0;
     display: grid;
     place-items: center;
@@ -280,7 +344,7 @@ aside { transition: width 200ms ease, padding 200ms ease }
     padding: 0;
     object-fit: contain;
 }
-.brand img.logo-firma { display: block; width: 160px; height: auto; max-width: 100% }
+.brand img.logo-firma { display: block; width: 200px; height: auto; max-width: 100% }
 .brand img.logo-icono { display: none; width: 36px; height: 35px }
 aside.collapsed .brand img.logo-icono { display: block }
 
@@ -289,6 +353,7 @@ aside.collapsed .brand img.logo-icono { display: block }
 
 aside.collapsed { width: 76px; padding: 22px 12px }
 aside.collapsed .brand { flex-direction: column; gap: 14px; padding: 4px 0 }
+aside.collapsed .navtoggle { display: none }
 aside.collapsed .brandtext,
 aside.collapsed .identity,
 aside.collapsed .navlabel { display: none }
@@ -299,11 +364,12 @@ aside.collapsed .avatar {
     height: 40px;
     margin: 0 auto;
     border-radius: 50%;
-    background: var(--sidebar-hover);
-    color: var(--text-on-dark);
+    background: radial-gradient(circle at 30% 25%, #FFB35C 0%, #F4752D 45%, #BF5219 100%);
+    color: #FFFFFF;
     font-size: .8rem;
     font-weight: 700;
     letter-spacing: .02em;
+    box-shadow: 0 0 0 2px rgba(255, 196, 140, .35);
 }
 aside.collapsed nav button,
 aside.collapsed .logout {
@@ -814,6 +880,46 @@ tbody tr:last-child td { border-bottom: 0 }
 .carttotal strong { font-size: 1.3rem; font-variant-numeric: tabular-nums; color: var(--text) }
 .carthint { display: block; margin-top: 2px; font-size: .75rem }
 .cartfoot { scroll-margin-bottom: 24px }
+
+/* Casilla de precio mayorista */
+.wholesale {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-top: 16px;
+    padding: 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color var(--ease), background-color var(--ease);
+}
+.wholesale input { flex: none; width: 20px; height: 20px; min-height: 20px; margin: 1px 0 0 }
+.wholesale b { display: block; font-size: .9rem }
+.wholesale small { display: block; margin-top: 2px; font-size: .76rem; font-weight: 500 }
+.wholesale.on { border-color: var(--primary); background: var(--primary-soft) }
+.wholesale:has(input:disabled) { cursor: default }
+.wholesale:focus-within { box-shadow: var(--focus) }
+
+.pcard-prices { display: flex; flex-direction: column; min-width: 0 }
+.pcard-prices small {
+    font-size: .72rem;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.pill.wholesale-pill {
+    margin-left: 10px;
+    vertical-align: middle;
+    background: var(--primary-soft);
+    color: var(--primary);
+    font-size: .72rem;
+}
+tfoot td { border-top: 2px solid var(--border); font-weight: 600 }
 .cartsubmit {
     width: 100%;
     margin-top: 14px;
@@ -927,7 +1033,7 @@ tbody tr:last-child td { border-bottom: 0 }
     .navtoggle, aside .avatar, aside.collapsed .avatar { display: none }
     .brandtext { display: none }
     .brand img.logo-icono { display: block; width: 34px; height: 33px }
-    aside.collapsed { width: 100%; padding: 10px 12px }
+    aside.collapsed, aside.overlay { width: 100%; padding: 10px 12px; margin-right: 0; box-shadow: none }
     aside.collapsed .brand { flex-direction: row; gap: 12px; padding: 0 }
     aside.collapsed .navlabel { display: inline }
     aside.collapsed nav button { padding: 9px 12px; gap: 12px; min-height: 40px }
