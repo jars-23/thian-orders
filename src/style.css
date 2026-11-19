@@ -272,6 +272,18 @@ aside { transition: width 200ms ease, padding 200ms ease }
 }
 .navtoggle:hover:not(:disabled) { background: var(--sidebar-hover); color: var(--text-on-dark) }
 
+/* Logos blancos sobre el café de la barra: sin fondo crema */
+.brand img.logo-firma,
+.brand img.logo-icono {
+    background: none;
+    border-radius: 0;
+    padding: 0;
+    object-fit: contain;
+}
+.brand img.logo-firma { display: block; width: 160px; height: auto; max-width: 100% }
+.brand img.logo-icono { display: none; width: 36px; height: 35px }
+aside.collapsed .brand img.logo-icono { display: block }
+
 .avatar { display: none }
 .navlabel { white-space: nowrap; overflow: hidden }
 
@@ -821,6 +833,8 @@ tbody tr:last-child td { border-bottom: 0 }
     .brand small, .identity { display: none }
     /* En móvil el menú ya es una barra superior: sin modo colapsado */
     .navtoggle, aside .avatar, aside.collapsed .avatar { display: none }
+    .brandtext { display: none }
+    .brand img.logo-icono { display: block; width: 34px; height: 33px }
     aside.collapsed { width: 100%; padding: 10px 12px }
     aside.collapsed .brand { flex-direction: row; gap: 12px; padding: 0 }
     aside.collapsed .navlabel { display: inline }

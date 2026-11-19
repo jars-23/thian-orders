@@ -442,14 +442,23 @@ function App() {
     <div className="shell">
       <aside className={navCollapsed ? "collapsed" : ""}>
         <div className="brand">
+          {/* Menú abierto: firma. Menú colapsado y móvil: ícono. */}
           <img
-            src={`${import.meta.env.BASE_URL}logo-thian.png`}
-            alt=""
-            width="40"
-            height="40"
+            className="logo-icono"
+            src={`${import.meta.env.BASE_URL}logo-icono.webp`}
+            alt="Thian Candle"
+            width="36"
+            height="35"
           />
           <div className="brandtext">
-            Thian Candle<small>Pedidos y producción</small>
+            <img
+              className="logo-firma"
+              src={`${import.meta.env.BASE_URL}logo-firma.webp`}
+              alt="Thian Candle"
+              width="160"
+              height="30"
+            />
+            <small>Pedidos y producción</small>
           </div>
           <button
             type="button"
