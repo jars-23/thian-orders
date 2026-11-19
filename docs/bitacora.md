@@ -135,8 +135,10 @@ flowchart LR
 | `login-username` con logs de diagnóstico por paso (respuesta al cliente sigue siendo genérica) | ✅ redesplegada |
 | Pruebas por rol (seller, production, sales_production, billing, supervisor) | ⏳ |
 | Migración `20261118_order_seller_names.sql`: producción, facturación y supervisor ven el nombre del vendedor (solo `full_name`, sin abrir `profiles`) | ✅ ejecutada y publicada (falta probar con usuario de producción) |
-| Migración `20261118b_product_price_category.sql`: columnas `price` (COP, precio general) y `category` en `products` | ⏳ ejecutar en SQL Editor |
-| Carga `seed/catalogo_navidad_2026.sql`: 27 productos del Catálogo Mayorista Navideño 2026 con precio general | ⏳ ejecutar después de la migración |
+| Migración `20261118b_product_price_category.sql`: columnas `price` (COP, precio general) y `category` en `products` | ✅ ejecutada y publicada |
+| Carga `seed/catalogo_navidad_2026.sql`: 27 productos del Catálogo Mayorista Navideño 2026 con precio general | ✅ ejecutada |
+| Migración `20261118c_product_images_storage.sql`: bucket público `product-images`, solo admin sube/cambia/borra | ⏳ ejecutar en SQL Editor |
+| Pedido con catálogo visual: categorías arriba, buscador, tarjetas con foto y precio, resumen con cantidades, personalización y total estimado; admin sube la foto de cada producto (se reduce a ~1000 px WebP) | ⏳ falta verlo con sesión iniciada |
 
 ### Próximos pasos
 1. Crear el proyecto `thian-orders` en la región East US, con RLS automático activado y "Grant API access" desactivado.

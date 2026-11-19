@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { createClient } from "@supabase/supabase-js";
 import {
@@ -8,7 +8,12 @@ import {
   Users,
   LogOut,
   Plus,
+  Minus,
   RefreshCw,
+  ShoppingCart,
+  Trash2,
+  ImagePlus,
+  Loader2,
 } from "lucide-react";
 import "./style.css";
 import { ThemeProvider, CssBaseline } from "@mui/material";
@@ -32,6 +37,29 @@ const fmtMoney = (n) =>
         currency: "COP",
         maximumFractionDigits: 0,
       }).format(n);
+const PRODUCT_BUCKET = "product-images";
+// Reduce la foto a máx. 1000 px y la pasa a WebP (JPEG si el navegador no
+// codifica WebP) para que el catálogo cargue rápido en el celular.
+async function resizeImage(file, max = 1000) {
+  if (!file?.type?.startsWith("image/"))
+    throw new Error("El archivo debe ser una imagen (JPG, PNG o WebP).");
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bmp.width * scale);
+  canvas.height = Math.round(bmp.height * scale);
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#FFFFFF";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  bmp.close?.();
+  const toBlob = (type) =>
+    new Promise((resolve) => canvas.toBlob(resolve, type, 0.85));
+  let blob = await toBlob("image/webp");
+  if (!blob || blob.type !== "image/webp") blob = await toBlob("image/jpeg");
+  if (!blob) throw new Error("No se pudo procesar la imagen.");
+  return blob;
+}
 function App() {
   const [session, setSession] = useState(null),
     [profile, setProfile] = useState(null),
@@ -319,6 +347,31 @@ function App() {
     if (!error) await reload();
     setBusy(false);
   }
+  const [uploadingId, setUploadingId] = useState(null);
+  async function uploadProductPhoto(product, file) {
+    if (!file || uploadingId) return;
+    setUploadingId(product.id);
+    try {
+      const blob = await resizeImage(file);
+      const ext = blob.type === "image/webp" ? "webp" : "jpg";
+      const path = `${product.id}/${Date.now()}.${ext}`;
+      const up = await supabase.storage
+        .from(PRODUCT_BUCKET)
+        .upload(path, blob, { contentType: blob.type, cacheControl: "31536000" });
+      if (up.error) throw up.error;
+      const { data } = supabase.storage.from(PRODUCT_BUCKET).getPublicUrl(path);
+      const { error } = await supabase
+        .from("products")
+        .update({ image_url: data.publicUrl })
+        .eq("id", product.id);
+      if (error) throw error;
+      message(null, `Foto de "${product.name}" actualizada`);
+      await reload();
+    } catch (err) {
+      message({ message: err?.message || "No se pudo subir la foto." });
+    }
+    setUploadingId(null);
+  }
   async function changeProduct(id, active) {
     setBusy(true);
     const { error } = await supabase
@@ -530,20 +583,71 @@ function App() {
                 <tbody>
                   {products.map((p) => (
                     <tr key={p.id}>
-                      <td>{p.name}</td>
+                      <td>
+                        <div className="prodcell">
+                          <span className="cartthumb" aria-hidden="true">
+                            {p.image_url ? (
+                              <img
+                                src={p.image_url}
+                                alt=""
+                                width="40"
+                                height="40"
+                                loading="lazy"
+                              />
+                            ) : (
+                              <Package size={16} />
+                            )}
+                          </span>
+                          {p.name}
+                        </div>
+                      </td>
                       <td>{p.category || "—"}</td>
                       <td>{p.sku || "—"}</td>
                       <td className="num">{fmtMoney(p.price)}</td>
                       <td>{p.active ? "Activo" : "Inactivo"}</td>
                       {admin && (
                         <td>
-                          <button
-                            className="secondary compact"
-                            disabled={busy}
-                            onClick={() => changeProduct(p.id, !p.active)}
-                          >
-                            {p.active ? "Desactivar" : "Activar"}
-                          </button>
+                          <div className="rowactions">
+                            <label
+                              className={
+                                "filebtn" +
+                                (uploadingId ? " is-disabled" : "")
+                              }
+                            >
+                              <input
+                                type="file"
+                                className="sr-only"
+                                accept="image/jpeg,image/png,image/webp"
+                                disabled={!!uploadingId}
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  e.target.value = "";
+                                  uploadProductPhoto(p, file);
+                                }}
+                              />
+                              {uploadingId === p.id ? (
+                                <Loader2
+                                  size={15}
+                                  className="spin"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <ImagePlus size={15} aria-hidden="true" />
+                              )}
+                              {uploadingId === p.id
+                                ? "Subiendo…"
+                                : p.image_url
+                                  ? "Cambiar foto"
+                                  : "Subir foto"}
+                            </label>
+                            <button
+                              className="secondary compact"
+                              disabled={busy}
+                              onClick={() => changeProduct(p.id, !p.active)}
+                            >
+                              {p.active ? "Desactivar" : "Activar"}
+                            </button>
+                          </div>
                         </td>
                       )}
                     </tr>
@@ -708,98 +812,270 @@ function UsernameEditor({ user, busy, onSave }) {
   );
 }
 function OrderForm({ products, busy, onSubmit }) {
-  const [lines, setLines] = useState([
-    { product_id: "", quantity: 1, notes: "" },
-  ]);
-  const edit = (idx, k, v) =>
-    setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, [k]: v } : x)));
+  const [cat, setCat] = useState("all");
+  const [query, setQuery] = useState("");
+  const [lines, setLines] = useState([]);
+  const nextKey = useRef(0);
+  const byId = new Map(products.map((p) => [p.id, p]));
+  const catOf = (p) => p.category || "Otros";
+  const categories = [...new Set(products.map(catOf))];
+  const q = query.trim().toLowerCase();
+  const visible = products.filter(
+    (p) =>
+      (cat === "all" || catOf(p) === cat) &&
+      (!q ||
+        p.name.toLowerCase().includes(q) ||
+        (p.description || "").toLowerCase().includes(q)),
+  );
+  const newLine = (product_id) => ({
+    key: nextKey.current++,
+    product_id,
+    quantity: 1,
+    notes: "",
+  });
+  // Suma a la línea sin personalización del mismo producto; si no hay, crea una.
+  const add = (p) =>
+    setLines((ls) => {
+      const i = ls.findIndex((l) => l.product_id === p.id && !l.notes.trim());
+      return i >= 0
+        ? ls.map((l, j) =>
+            j === i ? { ...l, quantity: Number(l.quantity) + 1 } : l,
+          )
+        : [...ls, newLine(p.id)];
+    });
+  const edit = (key, k, v) =>
+    setLines((ls) => ls.map((l) => (l.key === key ? { ...l, [k]: v } : l)));
+  const remove = (key) => setLines((ls) => ls.filter((l) => l.key !== key));
+  const inCart = (id) =>
+    lines
+      .filter((l) => l.product_id === id)
+      .reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+  const units = lines.reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+  const total = lines.reduce(
+    (s, l) => s + (byId.get(l.product_id)?.price || 0) * (Number(l.quantity) || 0),
+    0,
+  );
   const valid =
     lines.length > 0 &&
-    lines.every((l) => l.product_id && Number(l.quantity) > 0);
+    lines.every((l) => Number.isInteger(Number(l.quantity)) && Number(l.quantity) > 0);
   return (
-    <form className="panel" onSubmit={(e) => onSubmit(e, lines)}>
-      <h2>Datos del pedido</h2>
-      <div className="formgrid">
-        <label>
-          Cliente
-          <input
-            name="customer_name"
-            required
-            placeholder="Nombre del cliente"
-          />
-        </label>
-        <label>
-          Teléfono
-          <input name="customer_phone" placeholder="Opcional" />
-        </label>
-        <label>
-          Fecha de entrega
-          <input name="delivery_date" type="date" />
-        </label>
-        <label>
-          Observaciones generales
-          <input name="notes" placeholder="Indicaciones del pedido" />
-        </label>
-      </div>
-      <h2>Productos solicitados</h2>
-      {lines.map((l, i) => (
-        <div className="line" key={i}>
-          <select
-            value={l.product_id}
-            required
-            onChange={(e) => edit(i, "product_id", e.target.value)}
-          >
-            <option value="">Selecciona producto</option>
-            {products.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.price != null ? `${p.name} — ${fmtMoney(p.price)}` : p.name}
-              </option>
-            ))}
-          </select>
-          <input
-            type="number"
-            min="1"
-            value={l.quantity}
-            onChange={(e) => edit(i, "quantity", e.target.value)}
-            aria-label="Cantidad"
-            required
-          />
-          <input
-            placeholder="Detalle o personalización"
-            value={l.notes}
-            onChange={(e) => edit(i, "notes", e.target.value)}
-          />
-          <button
-            type="button"
-            className="secondary compact"
-            disabled={lines.length === 1}
-            onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}
-          >
-            Quitar
-          </button>
+    <form onSubmit={(e) => onSubmit(e, lines)}>
+      <div className="panel">
+        <h2>Datos del pedido</h2>
+        <div className="formgrid">
+          <label>
+            Cliente
+            <input
+              name="customer_name"
+              required
+              placeholder="Nombre del cliente"
+              autoComplete="off"
+            />
+          </label>
+          <label>
+            Teléfono
+            <input
+              name="customer_phone"
+              type="tel"
+              inputMode="tel"
+              placeholder="Opcional"
+            />
+          </label>
+          <label>
+            Fecha de entrega
+            <input name="delivery_date" type="date" />
+          </label>
+          <label>
+            Observaciones generales
+            <input name="notes" placeholder="Indicaciones del pedido" />
+          </label>
         </div>
-      ))}
-      <div className="actions">
-        <button
-          type="button"
-          className="secondary"
-          onClick={() =>
-            setLines((ls) => [
-              ...ls,
-              { product_id: "", quantity: 1, notes: "" },
-            ])
-          }
-        >
-          + Otro producto
-        </button>
-        <button disabled={busy || !valid}>Guardar pedido</button>
       </div>
-      {!products.length && (
-        <p>
-          El administrador debe crear productos activos antes de registrar
-          pedidos.
-        </p>
-      )}
+
+      <div className="orderlayout">
+        <section className="panel catalog" aria-labelledby="catalog-title">
+          <div className="catalog-head">
+            <h2 id="catalog-title">Catálogo</h2>
+            <input
+              type="search"
+              className="catalog-search"
+              placeholder="Buscar producto"
+              aria-label="Buscar producto"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+          <div className="chips" role="group" aria-label="Categorías">
+            {[["all", "Todas"], ...categories.map((c) => [c, c])].map(
+              ([id, label]) => (
+                <button
+                  type="button"
+                  key={id}
+                  className={"chip" + (cat === id ? " active" : "")}
+                  aria-pressed={cat === id}
+                  onClick={() => setCat(id)}
+                >
+                  {label}
+                </button>
+              ),
+            )}
+          </div>
+          {!products.length ? (
+            <p className="empty">
+              El administrador debe crear productos activos antes de registrar
+              pedidos.
+            </p>
+          ) : !visible.length ? (
+            <p className="empty">No hay productos que coincidan.</p>
+          ) : (
+            <div className="pgrid">
+              {visible.map((p) => {
+                const n = inCart(p.id);
+                return (
+                  <article
+                    className={"pcard" + (n ? " selected" : "")}
+                    key={p.id}
+                  >
+                    <div className="pcard-img">
+                      {p.image_url ? (
+                        <img
+                          src={p.image_url}
+                          alt={p.name}
+                          loading="lazy"
+                          width="300"
+                          height="300"
+                        />
+                      ) : (
+                        <Package size={36} aria-hidden="true" />
+                      )}
+                      {n > 0 && (
+                        <span className="pcard-badge">{n} en el pedido</span>
+                      )}
+                    </div>
+                    <div className="pcard-body">
+                      <small>{catOf(p)}</small>
+                      <h3>{p.name}</h3>
+                      {p.description && <p>{p.description}</p>}
+                      <div className="pcard-foot">
+                        <strong>{fmtMoney(p.price)}</strong>
+                        <button
+                          type="button"
+                          className="compact"
+                          onClick={() => add(p)}
+                          aria-label={`Agregar ${p.name}`}
+                        >
+                          <Plus size={16} aria-hidden="true" /> Agregar
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <aside className="panel cart" aria-labelledby="cart-title">
+          <h2 id="cart-title">
+            <ShoppingCart size={18} aria-hidden="true" /> Pedido
+            {units > 0 && <span className="cart-count">{units}</span>}
+          </h2>
+          {!lines.length ? (
+            <p className="empty">
+              Toca <b>Agregar</b> en un producto del catálogo.
+            </p>
+          ) : (
+            <ul className="cartlist">
+              {lines.map((l) => {
+                const p = byId.get(l.product_id);
+                return (
+                  <li className="cartline" key={l.key}>
+                    <div className="cartline-top">
+                      <div className="cartthumb" aria-hidden="true">
+                        {p?.image_url ? (
+                          <img src={p.image_url} alt="" width="44" height="44" />
+                        ) : (
+                          <Package size={18} />
+                        )}
+                      </div>
+                      <div className="cartinfo">
+                        <b>{p?.name || "Producto"}</b>
+                        <small>{fmtMoney(p?.price)} c/u</small>
+                      </div>
+                      <button
+                        type="button"
+                        className="iconbtn"
+                        aria-label={`Quitar ${p?.name || "producto"}`}
+                        onClick={() => remove(l.key)}
+                      >
+                        <Trash2 size={16} aria-hidden="true" />
+                      </button>
+                    </div>
+                    <div className="cartline-bottom">
+                      <div className="stepper">
+                        <button
+                          type="button"
+                          aria-label="Restar uno"
+                          disabled={Number(l.quantity) <= 1}
+                          onClick={() =>
+                            edit(l.key, "quantity", Math.max(1, Number(l.quantity) - 1))
+                          }
+                        >
+                          <Minus size={14} aria-hidden="true" />
+                        </button>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          inputMode="numeric"
+                          value={l.quantity}
+                          onChange={(e) => edit(l.key, "quantity", e.target.value)}
+                          aria-label={`Cantidad de ${p?.name || "producto"}`}
+                          required
+                        />
+                        <button
+                          type="button"
+                          aria-label="Sumar uno"
+                          onClick={() =>
+                            edit(l.key, "quantity", (Number(l.quantity) || 0) + 1)
+                          }
+                        >
+                          <Plus size={14} aria-hidden="true" />
+                        </button>
+                      </div>
+                      <input
+                        className="cartnotes"
+                        placeholder="Personalización: nombres, deseos, color"
+                        aria-label={`Personalización de ${p?.name || "producto"}`}
+                        value={l.notes}
+                        onChange={(e) => edit(l.key, "notes", e.target.value)}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="linkbtn"
+                      onClick={() =>
+                        setLines((ls) => [...ls, newLine(l.product_id)])
+                      }
+                    >
+                      + Otra con distinta personalización
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <div className="carttotal">
+            <span>Total estimado</span>
+            <strong>{fmtMoney(total)}</strong>
+          </div>
+          <small className="carthint">Calculado con el precio general.</small>
+          <button className="cartsubmit" disabled={busy || !valid}>
+            {busy && <Loader2 size={16} className="spin" aria-hidden="true" />}
+            {busy ? "Guardando…" : "Guardar pedido"}
+          </button>
+        </aside>
+      </div>
     </form>
   );
 }

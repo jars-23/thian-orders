@@ -350,6 +350,21 @@ GRANT EXECUTE ON FUNCTION public.create_order(text,text,date,text,jsonb) TO auth
 GRANT EXECUTE ON FUNCTION public.set_order_item_status(uuid, public.production_status) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.order_seller_names() TO authenticated;
 
+-- ---------------------------------------------------------------------
+-- 9. Fotos de productos (Storage): bucket público, solo admin escribe
+-- ---------------------------------------------------------------------
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('product-images', 'product-images', true, 5242880,
+        ARRAY['image/jpeg', 'image/png', 'image/webp'])
+ON CONFLICT (id) DO NOTHING;
+CREATE POLICY "product images admin insert" ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'product-images' AND public.is_admin());
+CREATE POLICY "product images admin update" ON storage.objects FOR UPDATE TO authenticated
+  USING (bucket_id = 'product-images' AND public.is_admin())
+  WITH CHECK (bucket_id = 'product-images' AND public.is_admin());
+CREATE POLICY "product images admin delete" ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'product-images' AND public.is_admin());
+
 COMMIT;
 
 -- =====================================================================
