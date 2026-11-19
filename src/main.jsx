@@ -32,6 +32,14 @@ const labels = {
 };
 const fmtDate = (d) =>
   d ? new Date(d + "T12:00:00").toLocaleDateString("es-CO") : "Sin fecha";
+// "14:30:00" -> "2:30 p. m."
+const fmtTime = (t) =>
+  t
+    ? new Date(`1970-01-01T${t}`).toLocaleTimeString("es-CO", {
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : "";
 const fmtMoney = (n) =>
   n == null
     ? "—"
@@ -351,6 +359,8 @@ function App() {
         notes: x.notes || "",
       })),
       p_wholesale: !!wholesale,
+      p_delivery_address: f.get("delivery_address") || null,
+      p_delivery_time: f.get("delivery_time") || null,
     });
     message(error, "Orden generada correctamente");
     if (!error) {
@@ -1078,19 +1088,32 @@ function OrderForm({ products, busy, onSubmit }) {
                 autoComplete="off"
               />
             </label>
+            <label>
+              Teléfono
+              <input
+                name="customer_phone"
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="Opcional"
+              />
+            </label>
+            <label>
+              Dirección de entrega
+              <input
+                name="delivery_address"
+                autoComplete="street-address"
+                placeholder="Calle, número, barrio, ciudad"
+              />
+            </label>
             <div className="fieldpair">
-              <label>
-                Teléfono
-                <input
-                  name="customer_phone"
-                  type="tel"
-                  inputMode="tel"
-                  placeholder="Opcional"
-                />
-              </label>
               <label>
                 Fecha de entrega
                 <input name="delivery_date" type="date" />
+              </label>
+              <label>
+                Hora de entrega
+                <input name="delivery_time" type="time" step="900" />
               </label>
             </div>
             <label>
@@ -1281,7 +1304,13 @@ function Orders({ orders, admin, busy, changeStatus }) {
               <p>
                 <b>Vendedor:</b> {o.seller_name || "—"} ·{" "}
                 <b>Entrega:</b> {fmtDate(o.delivery_date)}
+                {o.delivery_time && ` · ${fmtTime(o.delivery_time)}`}
               </p>
+              {o.delivery_address && (
+                <p>
+                  <b>Dirección:</b> {o.delivery_address}
+                </p>
+              )}
             </div>
             <small>{new Date(o.created_at).toLocaleString("es-CO")}</small>
           </div>

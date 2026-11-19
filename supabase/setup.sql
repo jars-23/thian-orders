@@ -59,6 +59,8 @@ CREATE TABLE public.orders (
   customer_name  text NOT NULL CHECK (length(trim(customer_name)) > 0),
   customer_phone text,
   delivery_date  date,
+  delivery_time  time,          -- hora de entrega (opcional)
+  delivery_address text,        -- dirección de entrega (opcional)
   notes          text,
   wholesale      boolean NOT NULL DEFAULT false, -- cobrado a precio mayorista
   created_at     timestamptz NOT NULL DEFAULT now()
@@ -200,7 +202,8 @@ FOR EACH ROW EXECUTE FUNCTION public.guard_admin_role_delete();
 -- Pedido + productos de forma atómica. SECURITY INVOKER: aplica RLS del usuario.
 -- Precio mayorista si p_wholesale o si el pedido suma 10+ unidades; precios desde products.
 CREATE FUNCTION public.create_order(p_customer_name text, p_customer_phone text,
-  p_delivery_date date, p_notes text, p_items jsonb, p_wholesale boolean DEFAULT false)
+  p_delivery_date date, p_notes text, p_items jsonb, p_wholesale boolean DEFAULT false,
+  p_delivery_address text DEFAULT NULL, p_delivery_time time DEFAULT NULL)
 RETURNS uuid LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 DECLARE
   c_wholesale_min_units constant integer := 10;  -- mantener igual que la app
@@ -219,9 +222,11 @@ BEGIN
   END LOOP;
   v_wholesale := coalesce(p_wholesale, false) OR v_units >= c_wholesale_min_units;
 
-  INSERT INTO public.orders (seller_id, customer_name, customer_phone, delivery_date, notes, wholesale)
+  INSERT INTO public.orders (seller_id, customer_name, customer_phone, delivery_date,
+                             delivery_time, delivery_address, notes, wholesale)
   VALUES ((SELECT auth.uid()), trim(p_customer_name), nullif(trim(p_customer_phone),''),
-          p_delivery_date, nullif(trim(p_notes),''), v_wholesale)
+          p_delivery_date, p_delivery_time, nullif(trim(p_delivery_address),''),
+          nullif(trim(p_notes),''), v_wholesale)
   RETURNING id INTO v_id;
 
   FOR v_item IN SELECT value FROM jsonb_array_elements(p_items) LOOP
@@ -355,7 +360,7 @@ REVOKE ALL ON FUNCTION public.is_active_user()        FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.has_role(text)          FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.is_admin()              FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.my_roles()              FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION public.create_order(text,text,date,text,jsonb,boolean) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.create_order(text,text,date,text,jsonb,boolean,text,time) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.set_order_item_status(uuid, public.production_status) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.order_seller_names()      FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.create_profile()          FROM PUBLIC, anon, authenticated;
@@ -367,7 +372,7 @@ GRANT EXECUTE ON FUNCTION public.is_active_user() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.has_role(text)   TO authenticated;
 GRANT EXECUTE ON FUNCTION public.is_admin()       TO authenticated;
 GRANT EXECUTE ON FUNCTION public.my_roles()       TO authenticated;
-GRANT EXECUTE ON FUNCTION public.create_order(text,text,date,text,jsonb,boolean) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.create_order(text,text,date,text,jsonb,boolean,text,time) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.set_order_item_status(uuid, public.production_status) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.order_seller_names() TO authenticated;
 
