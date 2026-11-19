@@ -40,9 +40,9 @@ function App() {
     [notice, setNotice] = useState("");
   const hasRole = (...codes) => codes.some((c) => roles.includes(c));
   const admin = hasRole("admin");
-  const canSell = hasRole("admin", "seller");
-  const canProduce = hasRole("admin", "production");
-  const canViewAll = hasRole("admin", "production", "billing", "supervisor");
+  // Deben coincidir con las políticas RLS (supabase/migrate_v1_2.sql).
+  const canSell = hasRole("admin", "seller", "sales_production");
+  const canProduce = hasRole("admin", "production", "sales_production");
   const message = (err, ok) => {
     setError(err?.message || "");
     setNotice(err ? "" : ok || "Guardado correctamente");
@@ -273,10 +273,10 @@ function App() {
   }
   async function changeStatus(id, status) {
     setBusy(true);
-    const { error } = await supabase
-      .from("order_items")
-      .update({ status })
-      .eq("id", id);
+    const { error } = await supabase.rpc("set_order_item_status", {
+      p_item_id: id,
+      p_status: status,
+    });
     message(error, "Estado actualizado");
     if (!error) await reload();
     setBusy(false);

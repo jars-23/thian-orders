@@ -5,7 +5,7 @@ const url = Deno.env.get('SUPABASE_URL')!;
 const anon = Deno.env.get('SUPABASE_ANON_KEY')!;
 const service = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const allowedOrigin = Deno.env.get('ALLOWED_ORIGIN') ?? '';
-const allowedRoles = ['admin','seller','production','billing','supervisor'];
+const allowedRoles = ['admin','seller','production','billing','supervisor','sales_production'];
 const headers = {
   'Access-Control-Allow-Origin': allowedOrigin,
   'Access-Control-Allow-Headers': 'authorization, apikey, x-client-info, content-type',
@@ -40,7 +40,7 @@ serve(async (req) => {
   if(!full_name||full_name.length>100||!/^[a-zA-Z0-9._]{4,20}$/.test(username)||
      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||
      typeof password!=='string'||password.length<10||password.length>128||
-     !Array.isArray(roles)||!roles.length||roles.length>5||
+     !Array.isArray(roles)||!roles.length||roles.length>allowedRoles.length||
      !roles.every((r:unknown)=>typeof r==='string'&&allowedRoles.includes(r))||new Set(roles).size!==roles.length)
      return reply(400,{error:'Revisa los campos y selecciona al menos un rol'});
   const {data: duplicate,error: duplicateError}=await admin.from('profiles').select('id').ilike('username',username).maybeSingle();
@@ -53,10 +53,13 @@ serve(async (req) => {
   if(createError||!created.user) return reply(409,{error:'No se pudo crear el usuario. Verifica que el correo no exista.'});
   const userId=created.user.id;
   const {error: profileError}=await admin.from('profiles').update({full_name,username,active:true}).eq('id',userId);
-  const {error: assignmentsError}=profileError?{error:profileError}:await admin.from('user_roles').insert(availableRoles!.map(r=>({user_id:userId,role_id:r.id})));
-  if(profileError||assignmentsError){
+  // El trigger create_profile asigna 'seller' por defecto: se reemplaza por los roles elegidos.
+  const {error: clearError}=profileError?{error:null}:await admin.from('user_roles').delete().eq('user_id',userId);
+  const {error: assignmentsError}=profileError||clearError?{error:null}:await admin.from('user_roles').insert(availableRoles!.map(r=>({user_id:userId,role_id:r.id})));
+  if(profileError||clearError||assignmentsError){
     await admin.auth.admin.deleteUser(userId);
-    return reply(assignmentsError?.code==='23505'?409:500,{error:assignmentsError?.code==='23505'?'El username ya está registrado':'No se pudo completar el registro'});
+    const duplicateUsername=profileError?.code==='23505';
+    return reply(duplicateUsername?409:500,{error:duplicateUsername?'El username ya está registrado':'No se pudo completar el registro'});
   }
   return reply(201,{id:userId,username});
 });
