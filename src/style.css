@@ -576,17 +576,11 @@ tbody tr:last-child td { border-bottom: 0 }
 }
 .orderlayout > .panel { margin: 0 }
 
+/* Sin scroll interno: la columna avanza con la página */
 .orderside {
-    position: sticky;
-    top: 20px;
     display: grid;
     gap: 16px;
-    /* cabe completa también antes de hacer scroll (debajo del título) */
-    max-height: calc(100dvh - 125px);
-    overflow-y: auto;
-    overscroll-behavior: contain;
     scroll-margin-top: 16px;
-    scrollbar-width: thin;
 }
 .orderside > .panel { margin: 0; padding: 18px }
 .orderside h2 { margin-bottom: 14px }
@@ -819,16 +813,7 @@ tbody tr:last-child td { border-bottom: 0 }
 }
 .carttotal strong { font-size: 1.3rem; font-variant-numeric: tabular-nums; color: var(--text) }
 .carthint { display: block; margin-top: 2px; font-size: .75rem }
-/* Total y botón siempre visibles al fondo de la columna lateral (escritorio) */
-.cartfoot {
-    position: sticky;
-    bottom: 0;
-    z-index: 1;
-    margin: 0 -18px -18px;
-    padding: 2px 18px 18px;
-    background: var(--surface);
-    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-}
+.cartfoot { scroll-margin-bottom: 24px }
 .cartsubmit {
     width: 100%;
     margin-top: 14px;
@@ -839,41 +824,36 @@ tbody tr:last-child td { border-bottom: 0 }
     gap: 8px;
 }
 
-/* Barra inferior (tableta y móvil) */
-.cartbar { display: none }
+/* Barra inferior: aparece solo mientras el total del pedido no está a la vista */
+.orderlayout { padding-bottom: 76px }
+.cartbar {
+    position: fixed;
+    z-index: 30;
+    left: 50%;
+    bottom: max(16px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    width: min(520px, calc(100% - 24px));
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 10px 10px 16px;
+    background: var(--sidebar);
+    color: var(--text-on-dark);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 8px 24px rgba(43, 29, 20, .25);
+    font-size: .9rem;
+    font-variant-numeric: tabular-nums;
+}
+.cartbar b { color: #FFFFFF }
 
 @media (max-width: 1100px) {
     .orderlayout { grid-template-columns: minmax(0, 1fr) }
     .orderside {
-        position: static;
-        max-height: none;
-        overflow: visible;
         grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
         align-items: start;
     }
     .pgrid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)) }
-    .orderlayout { padding-bottom: 76px }
-    .cartfoot { position: static }
-    .cartbar {
-        position: fixed;
-        z-index: 30;
-        left: 50%;
-        bottom: max(12px, env(safe-area-inset-bottom));
-        transform: translateX(-50%);
-        width: min(560px, calc(100% - 24px));
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 10px 10px 10px 16px;
-        background: var(--sidebar);
-        color: var(--text-on-dark);
-        border-radius: var(--radius-lg);
-        box-shadow: 0 8px 24px rgba(43, 29, 20, .25);
-        font-size: .9rem;
-        font-variant-numeric: tabular-nums;
-    }
-    .cartbar b { color: #FFFFFF }
 }
 
 @media (max-width: 760px) {

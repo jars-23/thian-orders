@@ -872,6 +872,16 @@ function OrderForm({ products, busy, onSubmit }) {
   const [query, setQuery] = useState("");
   const [lines, setLines] = useState([]);
   const nextKey = useRef(0);
+  // La barra inferior solo aparece mientras el total del pedido no se ve.
+  const footRef = useRef(null);
+  const [footVisible, setFootVisible] = useState(false);
+  useEffect(() => {
+    const el = footRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([e]) => setFootVisible(e.isIntersecting));
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
   const byId = new Map(products.map((p) => [p.id, p]));
   const catOf = (p) => p.category || "Otros";
   const categories = [...new Set(products.map(catOf))];
@@ -915,9 +925,7 @@ function OrderForm({ products, busy, onSubmit }) {
     lines.length > 0 &&
     lines.every((l) => Number.isInteger(Number(l.quantity)) && Number(l.quantity) > 0);
   const scrollToCart = () =>
-    document
-      .getElementById("order-side")
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    footRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   return (
     <form className="orderlayout" onSubmit={(e) => onSubmit(e, lines)}>
       <section className="panel catalog" aria-labelledby="catalog-title">
@@ -1133,7 +1141,7 @@ function OrderForm({ products, busy, onSubmit }) {
               })}
             </ul>
           )}
-          <div className="cartfoot">
+          <div className="cartfoot" ref={footRef}>
             <div className="carttotal">
               <span>Total estimado</span>
               <strong>{fmtMoney(total)}</strong>
@@ -1147,8 +1155,8 @@ function OrderForm({ products, busy, onSubmit }) {
         </section>
       </div>
 
-      {/* Tableta y móvil: resumen fijo abajo para no perder el pedido de vista */}
-      {units > 0 && (
+      {/* Resumen fijo abajo mientras el total del pedido está fuera de vista */}
+      {units > 0 && !footVisible && (
         <div className="cartbar">
           <span>
             <b>{units}</b> {units === 1 ? "producto" : "productos"} ·{" "}
