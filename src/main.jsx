@@ -458,7 +458,6 @@ function App() {
               width="160"
               height="30"
             />
-            <small>Pedidos y producción</small>
           </div>
           <button
             type="button"
