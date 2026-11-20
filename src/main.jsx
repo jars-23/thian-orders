@@ -19,6 +19,12 @@ import {
   UserRound,
   Pencil,
   X,
+  Factory,
+  CalendarDays,
+  Clock,
+  Settings,
+  CheckCircle2,
+  Eye,
 } from "lucide-react";
 import "./style.css";
 import { ThemeProvider, CssBaseline } from "@mui/material";
@@ -225,6 +231,9 @@ function App() {
   useEffect(() => {
     if (profile?.active && roles.length) reload();
   }, [profile?.id, profile?.active, roles.join("|")]);
+  useEffect(() => {
+    if (canProduce && !canSell && tab === "dashboard") setTab("production");
+  }, [roles.join("|")]);
   async function signin(e) {
     e.preventDefault();
     setBusy(true);
@@ -395,6 +404,24 @@ function App() {
     if (!error) await reload();
     return !error;
   }
+  async function setItemStatus(itemId, status) {
+    const prev = orders;
+    setOrders((os) =>
+      os.map((o) => ({
+        ...o,
+        order_items: o.order_items?.map((i) => (i.id === itemId ? { ...i, status } : i)),
+      })),
+    );
+    const { error } = await supabase.rpc("set_order_item_status", {
+      p_item_id: itemId,
+      p_status: status,
+    });
+    if (error) {
+      setOrders(prev);
+      message(error);
+    }
+    return !error;
+  }
   async function changeStatus(id, status) {
     setBusy(true);
     const { error } = await supabase.rpc("set_order_item_status", {
@@ -552,6 +579,7 @@ function App() {
         <nav aria-label="Navegación principal">
           {[
             ["dashboard", LayoutDashboard, "Resumen"],
+            ...(canProduce ? [["production", Factory, "Producción"]] : []),
             ["orders", ShoppingBag, "Pedidos"],
             ...(canSell ? [["new", Plus, "Nuevo pedido"]] : []),
             ["products", Package, "Productos"],
@@ -592,6 +620,7 @@ function App() {
                 {
                   dashboard: "Resumen general",
                   orders: "Pedidos",
+                  production: "Línea de producción",
                   new: "Registrar pedido",
                   products: "Productos",
                   sellers: "Vendedores",
@@ -638,6 +667,9 @@ function App() {
               products={products}
             />
           </>
+        )}
+        {tab === "production" && canProduce && (
+          <Production orders={orders} onStatus={setItemStatus} />
         )}
         {tab === "orders" && (
           <Orders
@@ -1400,7 +1432,8 @@ function Modal({ title, onClose, children, footer }) {
   useEffect(() => {
     const prev = document.activeElement;
     boxRef.current?.querySelector("input, button")?.focus();
-    const onKey = (e) => e.key === "Escape" && onClose();
+    const onKey = (e) =>
+      e.key === "Escape" && !document.querySelector(".lightbox") && onClose();
     document.addEventListener("keydown", onKey);
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -2066,6 +2099,276 @@ function Orders({ orders, admin, busy, changeStatus, canBill, userId, canSell, o
       ))}
       <Lightbox photo={photo} onClose={() => setPhoto(null)} />
     </>
+  );
+}
+// ---------------------------------------------------------------------
+// Línea de producción: tablero por pedido. La columna sale del estado de
+// sus productos (todos pendientes / alguno en curso / todos finalizados);
+// cada producto se gestiona por separado en el detalle.
+// ---------------------------------------------------------------------
+const PROD_COLUMNS = [
+  { id: "pending", title: "Pendientes", hint: "Por iniciar", icon: "clock" },
+  { id: "in_progress", title: "En proceso", hint: "En fabricación", icon: "gear" },
+  { id: "finished", title: "Finalizados", hint: "Listos para entrega", icon: "check" },
+];
+const orderStage = (o) => {
+  const its = o.order_items || [];
+  if (!its.length || its.every((i) => i.status === "pending")) return "pending";
+  if (its.every((i) => i.status === "finished")) return "finished";
+  return "in_progress";
+};
+// Días hasta la entrega (0 = hoy, negativo = vencido); null sin fecha.
+const daysUntil = (d) => {
+  if (!d) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((new Date(d + "T00:00:00") - today) / 86400000);
+};
+function DueChip({ order, done }) {
+  const n = daysUntil(order.delivery_date);
+  const time = order.delivery_time ? ` · ${fmtTime(order.delivery_time)}` : "";
+  let text, tone;
+  if (n === null) [text, tone] = ["Sin fecha", "neutral"];
+  else if (done) [text, tone] = [`Entrega ${fmtDate(order.delivery_date)}${time}`, "ok"];
+  else if (n < 0) [text, tone] = [`Vencido ${-n} ${n === -1 ? "día" : "días"}`, "late"];
+  else if (n === 0) [text, tone] = [`Hoy${time}`, "late"];
+  else if (n === 1) [text, tone] = [`Mañana${time}`, "soon"];
+  else if (n <= 3) [text, tone] = [`En ${n} días`, "soon"];
+  else [text, tone] = [`En ${n} días`, "ok"];
+  return (
+    <span className={`due due-${tone}`}>
+      <CalendarDays size={13} aria-hidden="true" /> {text}
+    </span>
+  );
+}
+function StatusSwitch({ item, onChange, saving }) {
+  return (
+    <div className="statusswitch" role="radiogroup" aria-label={`Estado de ${item.products?.name || "producto"}`}>
+      {Object.entries(labels).map(([v, l]) => (
+        <button
+          key={v}
+          type="button"
+          role="radio"
+          aria-checked={item.status === v}
+          className={`st-${v}` + (item.status === v ? " on" : "")}
+          disabled={saving}
+          onClick={() => item.status !== v && onChange(item.id, v)}
+        >
+          {l}
+        </button>
+      ))}
+    </div>
+  );
+}
+function ProductionDetail({ order, onStatus, onClose, onPhoto }) {
+  const [savingId, setSavingId] = useState(null);
+  const its = order.order_items || [];
+  const done = its.filter((i) => i.status === "finished").length;
+  async function change(id, status) {
+    setSavingId(id);
+    await onStatus(id, status);
+    setSavingId(null);
+  }
+  return (
+    <Modal
+      title={`Pedido #${order.order_number} · ${order.customer_name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <span>
+            <b>{done}</b> de {its.length} productos finalizados
+          </span>
+          <button type="button" onClick={onClose}>
+            Listo
+          </button>
+        </>
+      }
+    >
+      <div className="pd-meta">
+        <DueChip order={order} done={done === its.length && its.length > 0} />
+        <span>Vendedor: {order.seller_name || "—"}</span>
+        {order.notes && <span className="pd-notes">Observaciones: {order.notes}</span>}
+      </div>
+      <ul className="pd-items">
+        {its.map((i) => (
+          <li key={i.id} className={`pd-item st-${i.status}`}>
+            {i.products?.image_url ? (
+              <button
+                type="button"
+                className="pd-photo"
+                onClick={() => onPhoto({ src: i.products.image_url, alt: i.products.name })}
+                aria-label={`Ampliar foto de ${i.products.name}`}
+              >
+                <img src={i.products.image_url} alt="" width="72" height="72" loading="lazy" />
+              </button>
+            ) : (
+              <span className="pd-photo" aria-hidden="true">
+                <Package size={22} />
+              </span>
+            )}
+            <div className="pd-info">
+              <b>{i.products?.name || "Producto"}</b>
+              <span className="pd-qty">× {i.quantity}</span>
+              {i.notes && <span className="pd-note">{i.notes}</span>}
+            </div>
+            <div className="pd-actions">
+              {savingId === i.id && <Loader2 size={16} className="spin" aria-label="Guardando" />}
+              <StatusSwitch item={i} onChange={change} saving={savingId === i.id} />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Modal>
+  );
+}
+function Production({ orders, onStatus }) {
+  const [query, setQuery] = useState("");
+  const [range, setRange] = useState("all");
+  const [sort, setSort] = useState("due");
+  const [openId, setOpenId] = useState(null);
+  const [photo, setPhoto] = useState(null);
+  const [mobileCol, setMobileCol] = useState("pending");
+  const q = query.trim().toLowerCase();
+  const inRange = (o) => {
+    if (range === "all") return true;
+    const n = daysUntil(o.delivery_date);
+    if (n === null) return false;
+    if (range === "today") return n <= 0;
+    if (range === "soon") return n >= 1 && n <= 3;
+    return n <= 7;
+  };
+  const list = orders
+    .filter(
+      (o) =>
+        inRange(o) &&
+        (!q ||
+          String(o.order_number).includes(q.replace("#", "")) ||
+          o.customer_name?.toLowerCase().includes(q) ||
+          o.order_items?.some((i) => i.products?.name?.toLowerCase().includes(q))),
+    )
+    .sort((a, b) =>
+      sort === "number"
+        ? b.order_number - a.order_number
+        : (a.delivery_date || "9999-12-31").localeCompare(b.delivery_date || "9999-12-31") ||
+          (a.delivery_time || "").localeCompare(b.delivery_time || ""),
+    );
+  const byCol = Object.fromEntries(PROD_COLUMNS.map((c) => [c.id, []]));
+  list.forEach((o) => byCol[orderStage(o)].push(o));
+  const open = orders.find((o) => o.id === openId);
+  const colIcon = { clock: Clock, gear: Settings, check: CheckCircle2 };
+  return (
+    <div className="prod">
+      <div className="prod-stats">
+        <div className="pstat"><span>Pedidos</span><b>{list.length}</b></div>
+        {PROD_COLUMNS.map((c) => (
+          <div key={c.id} className={`pstat ps-${c.id}`}>
+            <span>{c.title}</span>
+            <b>{byCol[c.id].length}</b>
+          </div>
+        ))}
+      </div>
+      <div className="prod-tools">
+        <input
+          type="search"
+          className="prod-search"
+          placeholder="Buscar pedido, cliente o producto"
+          aria-label="Buscar pedido, cliente o producto"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <div className="chips prod-range" role="group" aria-label="Fecha de entrega">
+          {[["all", "Todos"], ["today", "Hoy y vencidos"], ["soon", "Próximos 1–3 días"], ["week", "Esta semana"]].map(([v, l]) => (
+            <button key={v} type="button" className={"chip" + (range === v ? " active" : "")} aria-pressed={range === v} onClick={() => setRange(v)}>
+              {l}
+            </button>
+          ))}
+        </div>
+        <label className="prod-sort">
+          Ordenar por
+          <select value={sort} onChange={(e) => setSort(e.target.value)}>
+            <option value="due">Fecha de entrega</option>
+            <option value="number">Pedido más reciente</option>
+          </select>
+        </label>
+      </div>
+      <div className="prod-mobiletabs" role="group" aria-label="Columna">
+        {PROD_COLUMNS.map((c) => (
+          <button key={c.id} type="button" className={mobileCol === c.id ? "on" : ""} aria-pressed={mobileCol === c.id} onClick={() => setMobileCol(c.id)}>
+            {c.title} <span>{byCol[c.id].length}</span>
+          </button>
+        ))}
+      </div>
+      <div className="board" data-col={mobileCol}>
+        {PROD_COLUMNS.map((c) => {
+          const Icon = colIcon[c.icon];
+          return (
+            <section key={c.id} className={`bcol bc-${c.id}`} aria-labelledby={`bcol-${c.id}`}>
+              <header>
+                <Icon size={18} aria-hidden="true" />
+                <div>
+                  <h2 id={`bcol-${c.id}`}>
+                    {c.title} <span>{byCol[c.id].length}</span>
+                  </h2>
+                  <small>{c.hint}</small>
+                </div>
+              </header>
+              {!byCol[c.id].length && <p className="empty">Sin pedidos aquí.</p>}
+              {byCol[c.id].map((o) => {
+                const its = o.order_items || [];
+                const done = its.filter((i) => i.status === "finished").length;
+                const units = its.reduce((s, i) => s + i.quantity, 0);
+                const pct = its.length ? Math.round((done / its.length) * 100) : 0;
+                return (
+                  <article key={o.id} className="pcard2">
+                    <div className="pc-top">
+                      <b>#{o.order_number}</b>
+                      <DueChip order={o} done={c.id === "finished"} />
+                    </div>
+                    <div className="pc-client">{o.customer_name}</div>
+                    <div className="pc-meta">
+                      {its.length} {its.length === 1 ? "producto" : "productos"} · {units}{" "}
+                      {units === 1 ? "unidad" : "unidades"}
+                    </div>
+                    {c.id === "in_progress" && (
+                      <div className="pc-progress" aria-label={`${done} de ${its.length} productos finalizados`}>
+                        <span><i style={{ width: `${pct}%` }} /></span>
+                        <small>{done} de {its.length}</small>
+                      </div>
+                    )}
+                    <div className="pc-foot">
+                      <div className="pc-thumbs">
+                        {its.slice(0, 4).map((i) => (
+                          <span key={i.id} className={`pc-thumb st-${i.status}`} title={`${i.products?.name} · ${labels[i.status]}`}>
+                            {i.products?.image_url ? (
+                              <img src={i.products.image_url} alt="" width="40" height="40" loading="lazy" />
+                            ) : (
+                              <Package size={16} aria-hidden="true" />
+                            )}
+                          </span>
+                        ))}
+                        {its.length > 4 && <span className="pc-more">+{its.length - 4}</span>}
+                      </div>
+                      <button type="button" className="secondary compact" onClick={() => setOpenId(o.id)}>
+                        <Eye size={15} aria-hidden="true" /> Ver detalle
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </section>
+          );
+        })}
+      </div>
+      {open && (
+        <ProductionDetail
+          order={open}
+          onStatus={onStatus}
+          onClose={() => setOpenId(null)}
+          onPhoto={setPhoto}
+        />
+      )}
+      <Lightbox photo={photo} onClose={() => setPhoto(null)} />
+    </div>
   );
 }
 createRoot(document.getElementById("root")).render(
