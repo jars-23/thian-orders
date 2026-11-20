@@ -53,7 +53,7 @@ const fmtMoney = (n) =>
 const PRODUCT_BUCKET = "product-images";
 // Regla de negocio: desde estas unidades por pedido aplica precio mayorista.
 // Debe coincidir con c_wholesale_min_units en create_order (SQL).
-const WHOLESALE_MIN_UNITS = 10;
+const WHOLESALE_MIN_UNITS = 12;
 // Deben coincidir con los CHECK de orders.payment_status / payment_method.
 const PAYMENT_STATUS = {
   pending: "Pago pendiente",
@@ -1530,7 +1530,7 @@ function OrderEditForm({ order, products = [], canBill, onSave, onCancel }) {
   const editItem = (key, k, v) =>
     setItems((xs) => xs.map((x) => (x.key === key ? { ...x, [k]: v } : x)));
   const units = items.reduce((s, x) => s + (Number(x.quantity) || 0), 0);
-  // Mismo criterio que update_order: 10+ unidades pasa a mayorista.
+  // Mismo criterio que update_order: 12+ unidades pasa a mayorista.
   const willBeWholesale = !order.wholesale && units >= WHOLESALE_MIN_UNITS;
   const wholesaleNow = order.wholesale || willBeWholesale;
   const priceOf = (x) => {

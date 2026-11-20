@@ -205,7 +205,7 @@ FOR EACH ROW EXECUTE FUNCTION public.guard_admin_role_delete();
 -- 6. RPC de negocio
 -- ---------------------------------------------------------------------
 -- Pedido + productos de forma atómica. SECURITY INVOKER: aplica RLS del usuario.
--- Precio mayorista si p_wholesale o si el pedido suma 10+ unidades; precios desde products.
+-- Precio mayorista si p_wholesale o si el pedido suma 12+ unidades; precios desde products.
 CREATE FUNCTION public.create_order(p_customer_name text, p_customer_phone text,
   p_delivery_date date, p_notes text, p_items jsonb, p_wholesale boolean DEFAULT false,
   p_delivery_address text DEFAULT NULL, p_delivery_time time DEFAULT NULL,
@@ -213,7 +213,7 @@ CREATE FUNCTION public.create_order(p_customer_name text, p_customer_phone text,
   p_amount_paid integer DEFAULT NULL)
 RETURNS uuid LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 DECLARE
-  c_wholesale_min_units constant integer := 10;  -- mantener igual que la app
+  c_wholesale_min_units constant integer := 12;  -- mantener igual que la app
   v_id uuid; v_item jsonb; v_qty integer; v_units integer := 0;
   v_wholesale boolean; v_price integer; v_price_wholesale integer;
   v_unit integer; v_total integer := 0; v_paid integer;
@@ -507,7 +507,7 @@ CREATE FUNCTION public.update_order(
   p_amount_paid integer DEFAULT NULL, p_items jsonb DEFAULT NULL)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
-  c_wholesale_min_units constant integer := 10;  -- mantener igual que la app
+  c_wholesale_min_units constant integer := 12;  -- mantener igual que la app
   v_uid uuid := (SELECT auth.uid());
   v_order public.orders%ROWTYPE;
   v_can_bill boolean; v_is_owner boolean;
@@ -580,7 +580,7 @@ BEGIN
     END IF;
     DELETE FROM public.order_items WHERE order_id = p_order_id AND NOT (id = ANY (v_keep));
 
-    -- Regla mayorista: 10+ unidades -> precio mayorista para todo el pedido
+    -- Regla mayorista: 12+ unidades -> precio mayorista para todo el pedido
     SELECT coalesce(sum(quantity), 0) INTO v_units FROM public.order_items WHERE order_id = p_order_id;
     IF NOT v_order.wholesale AND v_units >= c_wholesale_min_units THEN
       UPDATE public.orders SET wholesale = true WHERE id = p_order_id;

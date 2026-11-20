@@ -148,6 +148,7 @@ flowchart LR
 | Pedidos: foto del producto con ampliación (Esc / clic fuera / Cerrar) y botón Editar | ✅ publicado |
 | Migración `20261119f_edit_order_items.sql`: `update_order` con `p_items` (cambiar cantidad/personalización, quitar o agregar; solo ítems pendientes), regla mayorista y estado de pago recalculados | ✅ ejecutada y publicada |
 | Editar pedido: "Agregar productos" abre el catálogo visual en una ventana; se quita el botón "Registrar pago" (los pagos se ajustan en Editar; el historial sigue visible) | ✅ publicado |
+| Migración `20261120_wholesale_12_units.sql`: precio mayorista desde 12 unidades (antes 10) en `create_order` y `update_order`; la app usa `WHOLESALE_MIN_UNITS = 12` | ✅ ejecutada y publicada |
 | Pedido con catálogo visual: categorías arriba, buscador, tarjetas con foto y precio, resumen con cantidades, personalización y total estimado; admin sube la foto de cada producto (se reduce a ~1000 px WebP) | ⏳ falta verlo con sesión iniciada |
 
 ### Próximos pasos
