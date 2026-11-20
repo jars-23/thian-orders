@@ -127,9 +127,8 @@ function App() {
   const admin = hasRole("admin");
   // Deben coincidir con las políticas RLS (supabase/migrate_v1_2.sql).
   const canSell = hasRole("admin", "seller", "sales_production");
-  const canProduce = hasRole("admin", "production", "sales_production");
   // La pestaña Producción es solo para quien tiene rol de producción
-  // (el Administrador cambia estados desde Pedidos).
+  // (es el único lugar donde se cambia el estado de cada producto).
   const seesProduction = hasRole("production", "sales_production");
   // Debe coincidir con register_payment (SQL): Administrador y Facturación.
   const canBill = hasRole("admin", "billing");
@@ -433,16 +432,6 @@ function App() {
     }
     return !error;
   }
-  async function changeStatus(id, status) {
-    setBusy(true);
-    const { error } = await supabase.rpc("set_order_item_status", {
-      p_item_id: id,
-      p_status: status,
-    });
-    message(error, "Estado actualizado");
-    if (!error) await reload();
-    setBusy(false);
-  }
   async function changeSeller(id, patch) {
     setBusy(true);
     const { error } = await supabase
@@ -699,9 +688,7 @@ function App() {
             <h2>Pedidos recientes</h2>
             <Orders
               orders={orders.slice(0, 5)}
-              admin={canProduce}
               busy={busy}
-              changeStatus={changeStatus}
               canBill={canBill}
               userId={session?.user?.id}
               canSell={canSell}
@@ -716,9 +703,7 @@ function App() {
         {tab === "orders" && (
           <Orders
             orders={visibleOrders}
-            admin={canProduce}
             busy={busy}
-            changeStatus={changeStatus}
             canBill={canBill}
             userId={session?.user?.id}
             canSell={canSell}
@@ -1939,7 +1924,7 @@ function PaymentHistory({ order }) {
     </div>
   );
 }
-function Orders({ orders, admin, busy, changeStatus, canBill, userId, canSell, onEdit, products = [] }) {
+function Orders({ orders, busy, canBill, userId, canSell, onEdit, products = [] }) {
   const [filter, setFilter] = useState("all");
   const [photo, setPhoto] = useState(null);
   const [editingId, setEditingId] = useState(null);
@@ -2082,24 +2067,8 @@ function Orders({ orders, admin, busy, changeStatus, canBill, userId, canSell, o
                       {i.unit_price == null ? "—" : fmtMoney(i.unit_price * i.quantity)}
                     </td>
                     <td>
-                      {admin ? (
-                        <select
-                          aria-label="Estado de producción"
-                          disabled={busy}
-                          value={i.status}
-                          onChange={(e) => changeStatus(i.id, e.target.value)}
-                        >
-                          {Object.entries(labels).map(([v, l]) => (
-                            <option key={v} value={v}>
-                              {l}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span className={"pill " + i.status}>
-                          {labels[i.status]}
-                        </span>
-                      )}
+                      {/* Solo informativo: el estado se cambia en la línea de producción */}
+                      <span className={"pill " + i.status}>{labels[i.status]}</span>
                     </td>
                   </tr>
                 ))}
