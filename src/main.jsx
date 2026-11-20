@@ -127,6 +127,9 @@ function App() {
   // Deben coincidir con las políticas RLS (supabase/migrate_v1_2.sql).
   const canSell = hasRole("admin", "seller", "sales_production");
   const canProduce = hasRole("admin", "production", "sales_production");
+  // La pestaña Producción es solo para quien tiene rol de producción
+  // (el Administrador cambia estados desde Pedidos).
+  const seesProduction = hasRole("production", "sales_production");
   // Debe coincidir con register_payment (SQL): Administrador y Facturación.
   const canBill = hasRole("admin", "billing");
   const message = (err, ok) => {
@@ -232,7 +235,7 @@ function App() {
     if (profile?.active && roles.length) reload();
   }, [profile?.id, profile?.active, roles.join("|")]);
   useEffect(() => {
-    if (canProduce && !canSell && tab === "dashboard") setTab("production");
+    if (seesProduction && !canSell && tab === "dashboard") setTab("production");
   }, [roles.join("|")]);
   async function signin(e) {
     e.preventDefault();
@@ -579,7 +582,7 @@ function App() {
         <nav aria-label="Navegación principal">
           {[
             ["dashboard", LayoutDashboard, "Resumen"],
-            ...(canProduce ? [["production", Factory, "Producción"]] : []),
+            ...(seesProduction ? [["production", Factory, "Producción"]] : []),
             ["orders", ShoppingBag, "Pedidos"],
             ...(canSell ? [["new", Plus, "Nuevo pedido"]] : []),
             ["products", Package, "Productos"],
@@ -668,7 +671,7 @@ function App() {
             />
           </>
         )}
-        {tab === "production" && canProduce && (
+        {tab === "production" && seesProduction && (
           <Production orders={orders} onStatus={setItemStatus} />
         )}
         {tab === "orders" && (
