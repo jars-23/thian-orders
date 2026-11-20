@@ -119,6 +119,8 @@ function App() {
   // Deben coincidir con las políticas RLS (supabase/migrate_v1_2.sql).
   const canSell = hasRole("admin", "seller", "sales_production");
   const canProduce = hasRole("admin", "production", "sales_production");
+  // Debe coincidir con register_payment (SQL): Administrador y Facturación.
+  const canBill = hasRole("admin", "billing");
   const message = (err, ok) => {
     setError(err?.message || "");
     setNotice(err ? "" : ok || "Guardado correctamente");
@@ -180,7 +182,7 @@ function App() {
       supabase
         .from("orders")
         .select(
-          "*,order_items(id,product_id,quantity,status,notes,unit_price,products(name))",
+          "*,order_items(id,product_id,quantity,status,notes,unit_price,products(name)),order_payments(id,amount,method,note,created_at)",
         )
         .order("created_at", { ascending: false }),
       // profiles solo es legible por el propio usuario o admin; esta RPC
@@ -375,6 +377,16 @@ function App() {
       await reload();
     }
     setBusy(false);
+  }
+  async function registerPayment(orderId, amount, method) {
+    const { error } = await supabase.rpc("register_payment", {
+      p_order_id: orderId,
+      p_amount: amount,
+      p_method: method,
+    });
+    message(error, "Pago registrado");
+    if (!error) await reload();
+    return !error;
   }
   async function changeStatus(id, status) {
     setBusy(true);
@@ -612,6 +624,8 @@ function App() {
               admin={canProduce}
               busy={busy}
               changeStatus={changeStatus}
+              canBill={canBill}
+              onPay={registerPayment}
             />
           </>
         )}
@@ -621,6 +635,8 @@ function App() {
             admin={canProduce}
             busy={busy}
             changeStatus={changeStatus}
+            canBill={canBill}
+            onPay={registerPayment}
           />
         )}
         {tab === "new" && canSell && (
@@ -650,7 +666,7 @@ function App() {
                     name="price"
                     type="number"
                     min="0"
-                    step="100"
+                    step="1"
                     inputMode="numeric"
                     placeholder="Precio general (COP)"
                     aria-label="Precio general en pesos"
@@ -659,7 +675,7 @@ function App() {
                     name="price_wholesale"
                     type="number"
                     min="0"
-                    step="100"
+                    step="1"
                     inputMode="numeric"
                     placeholder="Precio mayorista (COP)"
                     aria-label="Precio mayorista en pesos"
@@ -1184,7 +1200,7 @@ function OrderForm({ products, busy, onSubmit }) {
                   name="amount_paid"
                   type="number"
                   min="1"
-                  step="100"
+                  step="1"
                   inputMode="numeric"
                   required
                   placeholder="$ 0"
@@ -1347,7 +1363,129 @@ function OrderForm({ products, busy, onSubmit }) {
     </form>
   );
 }
-function Orders({ orders, admin, busy, changeStatus }) {
+function PaymentPanel({ order, total, canBill, onPay }) {
+  const paid = order.amount_paid || 0;
+  const balance = Math.max(0, total - paid);
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [method, setMethod] = useState(order.payment_method || "");
+  const [saving, setSaving] = useState(false);
+  const value = Number(amount);
+  const err =
+    amount !== "" && value > balance
+      ? `No puede superar el saldo (${fmtMoney(balance)}).`
+      : "";
+  const ok = method && Number.isInteger(value) && value > 0 && !err;
+  const payments = [...(order.order_payments || [])].sort((a, b) =>
+    a.created_at.localeCompare(b.created_at),
+  );
+  async function submit(e) {
+    e.preventDefault();
+    if (!ok || saving) return;
+    setSaving(true);
+    const done = await onPay(order.id, value, method);
+    setSaving(false);
+    if (done) {
+      setOpen(false);
+      setAmount("");
+    }
+  }
+  if (!payments.length && !(canBill && total > 0 && balance > 0)) return null;
+  return (
+    <div className="paybox">
+      {payments.length > 0 && (
+        <ul className="payhistory" aria-label="Pagos registrados">
+          {payments.map((p) => (
+            <li key={p.id}>
+              <span>
+                {new Date(p.created_at).toLocaleDateString("es-CO")} ·{" "}
+                {PAYMENT_METHOD[p.method]}
+                {p.note && <small> · {p.note}</small>}
+              </span>
+              <b>{fmtMoney(p.amount)}</b>
+            </li>
+          ))}
+        </ul>
+      )}
+      {canBill && total > 0 && balance > 0 && !open && (
+        <button
+          type="button"
+          className="secondary compact"
+          onClick={() => {
+            setOpen(true);
+            setAmount(String(balance));
+          }}
+        >
+          <Plus size={15} aria-hidden="true" /> Registrar pago · saldo{" "}
+          {fmtMoney(balance)}
+        </button>
+      )}
+      {open && (
+        <form className="payform" onSubmit={submit}>
+          <label>
+            Valor del pago
+            <input
+              type="number"
+              min="1"
+              max={balance}
+              step="1"
+              inputMode="numeric"
+              required
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              aria-invalid={!!err}
+              aria-describedby={`payhelp-${order.id}`}
+            />
+            <small
+              id={`payhelp-${order.id}`}
+              className={err ? "fielderror" : "fieldhelp"}
+            >
+              {err ||
+                (value > 0 && value < balance
+                  ? `Quedará un saldo de ${fmtMoney(balance - value)}.`
+                  : value === balance
+                    ? "Con este pago el pedido queda en Pago completo."
+                    : `Saldo actual: ${fmtMoney(balance)}.`)}
+            </small>
+          </label>
+          <fieldset className="choicegroup">
+            <legend>Medio de pago</legend>
+            <div className="choices">
+              {Object.entries(PAYMENT_METHOD).map(([v, l]) => (
+                <label key={v} className={method === v ? "on" : ""}>
+                  <input
+                    type="radio"
+                    name={`method-${order.id}`}
+                    value={v}
+                    required
+                    checked={method === v}
+                    onChange={() => setMethod(v)}
+                  />
+                  {l}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <div className="payactions">
+            <button
+              type="button"
+              className="secondary compact"
+              disabled={saving}
+              onClick={() => setOpen(false)}
+            >
+              Cancelar
+            </button>
+            <button className="compact" disabled={!ok || saving}>
+              {saving && <Loader2 size={15} className="spin" aria-hidden="true" />}
+              {saving ? "Guardando…" : "Guardar pago"}
+            </button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+function Orders({ orders, admin, busy, changeStatus, canBill, onPay }) {
   const [filter, setFilter] = useState("all");
   const filtered = orders.filter(
     (o) => filter === "all" || o.order_items?.some((i) => i.status === filter),
@@ -1489,6 +1627,15 @@ function Orders({ orders, admin, busy, changeStatus }) {
               )}
             </table>
           </div>
+          <PaymentPanel
+            order={o}
+            total={(o.order_items || []).reduce(
+              (s, i) => s + (i.unit_price || 0) * i.quantity,
+              0,
+            )}
+            canBill={canBill}
+            onPay={onPay}
+          />
         </article>
       ))}
     </>

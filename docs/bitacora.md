@@ -142,6 +142,8 @@ flowchart LR
 | Menú que se oculta solo (se abre al pasar el mouse, botón para fijarlo), firma más grande, tarjeta de usuario con roles en español; botón "Generar orden"; precios en la lista de pedidos | ✅ publicado |
 | Migración `20261119b_delivery_address_time.sql`: `orders.delivery_address` y `orders.delivery_time`; `create_order` los recibe | ✅ ejecutada y publicada |
 | Migración `20261119c_payment.sql`: `payment_status` (pendiente/parcial/completo), `payment_method` (transferencia/efectivo), `amount_paid`; `create_order` valida medio y abono | ✅ ejecutada y publicada |
+| Migración `20261119d_order_payments.sql`: historial `order_payments`, abono inicial por trigger y `register_payment` (Administrador y Facturación) | ✅ ejecutada y publicada |
+| Corrección: campos de valor con `step="100"` y `min="1"` rechazaban montos como 20.000 (Valor abonado) | ✅ publicada |
 | Pedido con catálogo visual: categorías arriba, buscador, tarjetas con foto y precio, resumen con cantidades, personalización y total estimado; admin sube la foto de cada producto (se reduce a ~1000 px WebP) | ⏳ falta verlo con sesión iniciada |
 
 ### Próximos pasos

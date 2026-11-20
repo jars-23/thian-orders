@@ -518,6 +518,37 @@ tbody tr:last-child td { border-bottom: 0 }
 .order > p { margin: 14px 22px 0; font-size: .9rem }
 .order .tablewrap { padding: 6px 10px 10px }
 
+/* Pagos del pedido: historial y registrar pago */
+.paybox {
+    display: grid;
+    gap: 12px;
+    justify-items: start;
+    margin: 0 22px 18px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--border-strong);
+}
+.payhistory { list-style: none; margin: 0; padding: 0; width: 100%; max-width: 520px; display: grid; gap: 6px }
+.payhistory li {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: .85rem;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+.payhistory b { color: var(--text) }
+.payform {
+    display: grid;
+    gap: 12px;
+    width: 100%;
+    max-width: 520px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+}
+.payactions { display: flex; justify-content: flex-end; gap: 8px }
+
 .filter { margin-bottom: 16px; max-width: 260px }
 .filter select { margin-top: 6px }
 
@@ -1117,6 +1148,7 @@ tfoot td { border-top: 2px solid var(--border); font-weight: 600 }
     .orderhead { display: block; padding: 16px }
     .orderhead small { display: block; margin-top: 8px }
     .order > p { margin: 12px 16px 0 }
+    .paybox { margin: 0 16px 16px }
 
     .rolechecks { min-width: 240px }
 
