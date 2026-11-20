@@ -1157,3 +1157,90 @@ tfoot td { border-top: 2px solid var(--border); font-weight: 600 }
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition-duration: 0ms !important; animation-duration: 0ms !important }
 }
+
+/* Cabecera del pedido: fecha + botón Editar */
+.orderhead-side {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 10px;
+    flex: none;
+}
+
+/* Editar pedido */
+.editorder {
+    display: grid;
+    gap: 14px;
+    margin: 0;
+    padding: 16px 22px;
+    background: var(--primary-soft);
+    border-bottom: 1px solid var(--border);
+}
+.editgrid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 16px;
+}
+.editgrid .span2 { grid-column: 1 / -1 }
+.editorder .fieldhelp { margin: 0 }
+
+/* Foto del producto en el pedido */
+.thumbbtn {
+    flex: none;
+    width: 48px;
+    height: 48px;
+    min-height: 48px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--surface);
+    cursor: zoom-in;
+}
+.thumbbtn img { width: 100%; height: 100%; object-fit: cover; display: block }
+.thumbbtn:hover:not(:disabled) { background: var(--surface); border-color: var(--primary) }
+
+/* Foto ampliada */
+.lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: rgba(28, 18, 11, .82);
+    cursor: zoom-out;
+    animation: lb-in 160ms ease;
+}
+.lightbox figure { margin: 0; display: grid; gap: 10px; justify-items: center; cursor: default }
+.lightbox img {
+    max-width: min(92vw, 900px);
+    max-height: 80dvh;
+    width: auto;
+    height: auto;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, .45);
+    background: var(--surface);
+}
+.lightbox figcaption { color: #FFFFFF; font-weight: 600; text-align: center }
+.lightbox-close {
+    position: fixed;
+    top: max(16px, env(safe-area-inset-top));
+    right: 16px;
+    width: 44px;
+    min-height: 44px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, .14);
+    color: #FFFFFF;
+}
+.lightbox-close:hover:not(:disabled) { background: rgba(255, 255, 255, .28) }
+@keyframes lb-in { from { opacity: 0 } to { opacity: 1 } }
+
+@media (max-width: 760px) {
+    .orderhead-side { flex-direction: row; align-items: center; justify-content: space-between; margin-top: 10px }
+    .editorder { padding: 14px 16px }
+    .editgrid { grid-template-columns: 1fr }
+}

@@ -17,6 +17,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   UserRound,
+  Pencil,
+  X,
 } from "lucide-react";
 import "./style.css";
 import { ThemeProvider, CssBaseline } from "@mui/material";
@@ -182,7 +184,7 @@ function App() {
       supabase
         .from("orders")
         .select(
-          "*,order_items(id,product_id,quantity,status,notes,unit_price,products(name)),order_payments(id,amount,method,note,created_at)",
+          "*,order_items(id,product_id,quantity,status,notes,unit_price,products(name,image_url)),order_payments(id,amount,method,note,created_at)",
         )
         .order("created_at", { ascending: false }),
       // profiles solo es legible por el propio usuario o admin; esta RPC
@@ -377,6 +379,20 @@ function App() {
       await reload();
     }
     setBusy(false);
+  }
+  async function updateOrder(orderId, data) {
+    const { error } = await supabase.rpc("update_order", {
+      p_order_id: orderId,
+      p_customer_name: data.customer_name,
+      p_customer_phone: data.customer_phone,
+      p_delivery_address: data.delivery_address,
+      p_payment_status: data.payment_status ?? null,
+      p_payment_method: data.payment_method ?? null,
+      p_amount_paid: data.amount_paid ?? null,
+    });
+    message(error, "Pedido actualizado");
+    if (!error) await reload();
+    return !error;
   }
   async function registerPayment(orderId, amount, method) {
     const { error } = await supabase.rpc("register_payment", {
@@ -626,6 +642,9 @@ function App() {
               changeStatus={changeStatus}
               canBill={canBill}
               onPay={registerPayment}
+              userId={session?.user?.id}
+              canSell={canSell}
+              onEdit={updateOrder}
             />
           </>
         )}
@@ -637,6 +656,9 @@ function App() {
             changeStatus={changeStatus}
             canBill={canBill}
             onPay={registerPayment}
+            userId={session?.user?.id}
+            canSell={canSell}
+            onEdit={updateOrder}
           />
         )}
         {tab === "new" && canSell && (
@@ -1363,6 +1385,197 @@ function OrderForm({ products, busy, onSubmit }) {
     </form>
   );
 }
+// Foto ampliada: Esc, clic fuera o botón Cerrar la cierran.
+function Lightbox({ photo, onClose }) {
+  const closeRef = useRef(null);
+  useEffect(() => {
+    if (!photo) return;
+    const prev = document.activeElement;
+    closeRef.current?.focus();
+    const onKey = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = overflow;
+      prev?.focus?.();
+    };
+  }, [photo]);
+  if (!photo) return null;
+  return (
+    <div
+      className="lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-label={photo.alt}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <figure>
+        <img src={photo.src} alt={photo.alt} />
+        <figcaption>{photo.alt}</figcaption>
+      </figure>
+      <button
+        ref={closeRef}
+        type="button"
+        className="lightbox-close"
+        onClick={onClose}
+        aria-label="Cerrar foto"
+      >
+        <X size={22} aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+// Editar datos del pedido. El pago solo lo ven Administrador y Facturación.
+function OrderEditForm({ order, total, canBill, onSave, onCancel }) {
+  const [status, setStatus] = useState(order.payment_status || "pending");
+  const [method, setMethod] = useState(order.payment_method || "");
+  const [amount, setAmount] = useState(
+    order.payment_status === "partial" ? String(order.amount_paid || "") : "",
+  );
+  const [saving, setSaving] = useState(false);
+  const value = Number(amount);
+  const payErr =
+    canBill && status === "partial" && amount !== "" && total > 0 && value >= total
+      ? `El abono debe ser menor al total (${fmtMoney(total)}).`
+      : "";
+  const payOk =
+    !canBill ||
+    status === "pending" ||
+    (method &&
+      (status === "paid" || (Number.isInteger(value) && value > 0 && !payErr)));
+  async function submit(e) {
+    e.preventDefault();
+    if (!payOk || saving) return;
+    const f = new FormData(e.currentTarget);
+    setSaving(true);
+    const done = await onSave(order.id, {
+      customer_name: String(f.get("customer_name") || ""),
+      customer_phone: String(f.get("customer_phone") || ""),
+      delivery_address: String(f.get("delivery_address") || ""),
+      ...(canBill && {
+        payment_status: status,
+        payment_method: status === "pending" ? null : method || null,
+        amount_paid: status === "partial" ? value : null,
+      }),
+    });
+    setSaving(false);
+    if (done) onCancel();
+  }
+  const idp = `edit-${order.id}`;
+  return (
+    <form
+      className="editorder"
+      onSubmit={submit}
+      aria-label={`Editar pedido ${order.order_number}`}
+    >
+      <div className="editgrid">
+        <label>
+          Cliente
+          <input name="customer_name" required defaultValue={order.customer_name} />
+        </label>
+        <label>
+          Teléfono
+          <input
+            name="customer_phone"
+            type="tel"
+            inputMode="tel"
+            defaultValue={order.customer_phone || ""}
+            placeholder="Opcional"
+          />
+        </label>
+        <label className="span2">
+          Dirección de entrega
+          <input
+            name="delivery_address"
+            defaultValue={order.delivery_address || ""}
+            placeholder="Calle, número, barrio, ciudad"
+          />
+        </label>
+      </div>
+      {canBill && (
+        <div className="editgrid">
+          <fieldset className="choicegroup span2">
+            <legend>Tipo de pago</legend>
+            <div className="choices">
+              {Object.entries(PAYMENT_STATUS).map(([v, l]) => (
+                <label key={v} className={status === v ? "on" : ""}>
+                  <input
+                    type="radio"
+                    name={`${idp}-status`}
+                    checked={status === v}
+                    onChange={() => setStatus(v)}
+                  />
+                  {l}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          {status !== "pending" && (
+            <fieldset className="choicegroup">
+              <legend>Medio de pago</legend>
+              <div className="choices">
+                {Object.entries(PAYMENT_METHOD).map(([v, l]) => (
+                  <label key={v} className={method === v ? "on" : ""}>
+                    <input
+                      type="radio"
+                      name={`${idp}-method`}
+                      required
+                      checked={method === v}
+                      onChange={() => setMethod(v)}
+                    />
+                    {l}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
+          {status === "partial" && (
+            <label>
+              Valor abonado
+              <input
+                type="number"
+                min="1"
+                step="1"
+                inputMode="numeric"
+                required
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                aria-invalid={!!payErr}
+                aria-describedby={`${idp}-help`}
+              />
+              <small id={`${idp}-help`} className={payErr ? "fielderror" : "fieldhelp"}>
+                {payErr ||
+                  (value > 0 && total > 0
+                    ? `Saldo: ${fmtMoney(total - value)}`
+                    : `Total del pedido: ${fmtMoney(total)}`)}
+              </small>
+            </label>
+          )}
+          <p className="fieldhelp span2">
+            Si cambia lo abonado, la diferencia queda en el historial como
+            “Corrección”.
+          </p>
+        </div>
+      )}
+      <div className="payactions">
+        <button
+          type="button"
+          className="secondary compact"
+          disabled={saving}
+          onClick={onCancel}
+        >
+          Cancelar
+        </button>
+        <button className="compact" disabled={!payOk || saving}>
+          {saving && <Loader2 size={15} className="spin" aria-hidden="true" />}
+          {saving ? "Guardando…" : "Guardar cambios"}
+        </button>
+      </div>
+    </form>
+  );
+}
 function PaymentPanel({ order, total, canBill, onPay }) {
   const paid = order.amount_paid || 0;
   const balance = Math.max(0, total - paid);
@@ -1485,8 +1698,14 @@ function PaymentPanel({ order, total, canBill, onPay }) {
     </div>
   );
 }
-function Orders({ orders, admin, busy, changeStatus, canBill, onPay }) {
+function Orders({ orders, admin, busy, changeStatus, canBill, onPay, userId, canSell, onEdit }) {
   const [filter, setFilter] = useState("all");
+  const [photo, setPhoto] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const orderTotal = (o) =>
+    (o.order_items || []).reduce((s, i) => s + (i.unit_price || 0) * i.quantity, 0);
+  // Debe coincidir con update_order (SQL).
+  const canEdit = (o) => canBill || (canSell && o.seller_id === userId);
   const filtered = orders.filter(
     (o) => filter === "all" || o.order_items?.some((i) => i.status === filter),
   );
@@ -1540,8 +1759,28 @@ function Orders({ orders, admin, busy, changeStatus, canBill, onPay }) {
                 )}
               </p>
             </div>
-            <small>{new Date(o.created_at).toLocaleString("es-CO")}</small>
+            <div className="orderhead-side">
+              <small>{new Date(o.created_at).toLocaleString("es-CO")}</small>
+              {canEdit(o) && editingId !== o.id && (
+                <button
+                  type="button"
+                  className="secondary compact"
+                  onClick={() => setEditingId(o.id)}
+                >
+                  <Pencil size={15} aria-hidden="true" /> Editar
+                </button>
+              )}
+            </div>
           </div>
+          {editingId === o.id && (
+            <OrderEditForm
+              order={o}
+              total={orderTotal(o)}
+              canBill={canBill}
+              onSave={onEdit}
+              onCancel={() => setEditingId(null)}
+            />
+          )}
           {o.notes && (
             <p>
               <b>Observaciones:</b> {o.notes}
@@ -1562,8 +1801,37 @@ function Orders({ orders, admin, busy, changeStatus, canBill, onPay }) {
                 {o.order_items?.map((i) => (
                   <tr key={i.id}>
                     <td>
-                      {i.products?.name || "Producto"}
-                      {i.notes && <small className="subnote">{i.notes}</small>}
+                      <div className="prodcell">
+                        {i.products?.image_url ? (
+                          <button
+                            type="button"
+                            className="thumbbtn"
+                            onClick={() =>
+                              setPhoto({
+                                src: i.products.image_url,
+                                alt: i.products?.name || "Producto",
+                              })
+                            }
+                            aria-label={`Ampliar foto de ${i.products?.name || "producto"}`}
+                          >
+                            <img
+                              src={i.products.image_url}
+                              alt=""
+                              width="48"
+                              height="48"
+                              loading="lazy"
+                            />
+                          </button>
+                        ) : (
+                          <span className="cartthumb" aria-hidden="true">
+                            <Package size={16} />
+                          </span>
+                        )}
+                        <div>
+                          {i.products?.name || "Producto"}
+                          {i.notes && <small className="subnote">{i.notes}</small>}
+                        </div>
+                      </div>
                     </td>
                     <td className="num">{i.quantity}</td>
                     <td className="num">{fmtMoney(i.unit_price)}</td>
@@ -1629,15 +1897,13 @@ function Orders({ orders, admin, busy, changeStatus, canBill, onPay }) {
           </div>
           <PaymentPanel
             order={o}
-            total={(o.order_items || []).reduce(
-              (s, i) => s + (i.unit_price || 0) * i.quantity,
-              0,
-            )}
+            total={orderTotal(o)}
             canBill={canBill}
             onPay={onPay}
           />
         </article>
       ))}
+      <Lightbox photo={photo} onClose={() => setPhoto(null)} />
     </>
   );
 }

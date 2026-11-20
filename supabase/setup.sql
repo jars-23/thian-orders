@@ -427,7 +427,7 @@ CREATE POLICY "product images admin delete" ON storage.objects FOR DELETE TO aut
 CREATE TABLE IF NOT EXISTS public.order_payments (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   order_id   uuid NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
-  amount     integer NOT NULL CHECK (amount > 0),
+  amount     integer NOT NULL CONSTRAINT order_payments_amount_check CHECK (amount <> 0), -- negativo = corrección
   method     text NOT NULL CHECK (method IN ('transfer', 'cash')),
   note       text,
   created_by uuid REFERENCES public.profiles(id),
@@ -494,6 +494,91 @@ END; $$;
 REVOKE ALL ON FUNCTION public.log_initial_payment() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.register_payment(uuid, integer, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.register_payment(uuid, integer, text) TO authenticated;
+
+
+-- ---------------------------------------------------------------------
+-- 11. Editar pedido (cliente; pago solo Administrador/Facturación). Ver 20261119e.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.update_order(
+  p_order_id uuid, p_customer_name text, p_customer_phone text, p_delivery_address text,
+  p_payment_status text DEFAULT NULL, p_payment_method text DEFAULT NULL,
+  p_amount_paid integer DEFAULT NULL)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+  v_order public.orders%ROWTYPE;
+  v_can_bill boolean; v_is_owner boolean;
+  v_total integer; v_new_paid integer; v_method text; v_diff integer;
+BEGIN
+  IF v_uid IS NULL OR NOT public.is_active_user() THEN
+    RAISE EXCEPTION 'Sesión no válida' USING ERRCODE = '42501';
+  END IF;
+  SELECT * INTO v_order FROM public.orders WHERE id = p_order_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Pedido no encontrado' USING ERRCODE = 'P0002'; END IF;
+
+  v_can_bill := public.is_admin() OR public.has_role('billing');
+  v_is_owner := v_order.seller_id = v_uid
+                AND (public.has_role('seller') OR public.has_role('sales_production'));
+  IF NOT (v_can_bill OR v_is_owner) THEN
+    RAISE EXCEPTION 'No tienes permiso para editar este pedido' USING ERRCODE = '42501';
+  END IF;
+  IF nullif(trim(p_customer_name), '') IS NULL THEN RAISE EXCEPTION 'Cliente requerido'; END IF;
+
+  UPDATE public.orders
+     SET customer_name    = trim(p_customer_name),
+         customer_phone   = nullif(trim(p_customer_phone), ''),
+         delivery_address = nullif(trim(p_delivery_address), '')
+   WHERE id = p_order_id;
+
+  -- Pago (opcional): solo si se envía tipo de pago
+  IF p_payment_status IS NOT NULL THEN
+    IF NOT v_can_bill THEN
+      RAISE EXCEPTION 'Solo Administración o Facturación editan el pago' USING ERRCODE = '42501';
+    END IF;
+    IF p_payment_status NOT IN ('pending', 'partial', 'paid') THEN
+      RAISE EXCEPTION 'Tipo de pago inválido';
+    END IF;
+    IF p_payment_method IS NOT NULL AND p_payment_method NOT IN ('transfer', 'cash') THEN
+      RAISE EXCEPTION 'Medio de pago inválido';
+    END IF;
+    IF p_payment_status <> 'pending' AND p_payment_method IS NULL THEN
+      RAISE EXCEPTION 'Indica el medio de pago';
+    END IF;
+
+    SELECT coalesce(sum(unit_price * quantity), 0) INTO v_total
+      FROM public.order_items WHERE order_id = p_order_id;
+    IF p_payment_status <> 'pending' AND v_total = 0 THEN
+      RAISE EXCEPTION 'El pedido no tiene precios guardados';
+    END IF;
+
+    v_new_paid := CASE p_payment_status
+                    WHEN 'paid' THEN v_total
+                    WHEN 'pending' THEN 0
+                    ELSE p_amount_paid END;
+    IF p_payment_status = 'partial'
+       AND (v_new_paid IS NULL OR v_new_paid <= 0 OR v_new_paid >= v_total) THEN
+      RAISE EXCEPTION 'En pago parcial el abono debe ser mayor a 0 y menor al total (%)', v_total;
+    END IF;
+
+    v_method := CASE WHEN p_payment_status = 'pending' THEN NULL ELSE p_payment_method END;
+    v_diff := v_new_paid - coalesce(v_order.amount_paid, 0);
+    IF v_diff <> 0 THEN
+      INSERT INTO public.order_payments (order_id, amount, method, note, created_by)
+      VALUES (p_order_id, v_diff,
+              coalesce(p_payment_method, v_order.payment_method, 'cash'),
+              'Corrección', v_uid);
+    END IF;
+
+    UPDATE public.orders
+       SET payment_status = p_payment_status,
+           payment_method = v_method,
+           amount_paid    = v_new_paid
+     WHERE id = p_order_id;
+  END IF;
+END; $$;
+
+REVOKE ALL ON FUNCTION public.update_order(uuid,text,text,text,text,text,integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.update_order(uuid,text,text,text,text,text,integer) TO authenticated;
 
 COMMIT;
 
