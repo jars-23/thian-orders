@@ -389,6 +389,7 @@ function App() {
       p_payment_status: data.payment_status ?? null,
       p_payment_method: data.payment_method ?? null,
       p_amount_paid: data.amount_paid ?? null,
+      p_items: data.items ?? null,
     });
     message(error, "Pedido actualizado");
     if (!error) await reload();
@@ -645,6 +646,7 @@ function App() {
               userId={session?.user?.id}
               canSell={canSell}
               onEdit={updateOrder}
+              products={products}
             />
           </>
         )}
@@ -659,6 +661,7 @@ function App() {
             userId={session?.user?.id}
             canSell={canSell}
             onEdit={updateOrder}
+            products={products}
           />
         )}
         {tab === "new" && canSell && (
@@ -1428,7 +1431,45 @@ function Lightbox({ photo, onClose }) {
   );
 }
 // Editar datos del pedido. El pago solo lo ven Administrador y Facturación.
-function OrderEditForm({ order, total, canBill, onSave, onCancel }) {
+function OrderEditForm({ order, products = [], canBill, onSave, onCancel }) {
+  const byId = new Map(products.map((p) => [p.id, p]));
+  const original = (order.order_items || []).map((i) => ({
+    key: i.id,
+    id: i.id,
+    product_id: i.product_id,
+    quantity: i.quantity,
+    notes: i.notes || "",
+    status: i.status,
+    unit_price: i.unit_price,
+    name: i.products?.name || byId.get(i.product_id)?.name || "Producto",
+    image_url: i.products?.image_url || byId.get(i.product_id)?.image_url || null,
+  }));
+  const [items, setItems] = useState(original);
+  const [addId, setAddId] = useState("");
+  const editItem = (key, k, v) =>
+    setItems((xs) => xs.map((x) => (x.key === key ? { ...x, [k]: v } : x)));
+  const units = items.reduce((s, x) => s + (Number(x.quantity) || 0), 0);
+  // Mismo criterio que update_order: 10+ unidades pasa a mayorista.
+  const willBeWholesale = !order.wholesale && units >= WHOLESALE_MIN_UNITS;
+  const wholesaleNow = order.wholesale || willBeWholesale;
+  const priceOf = (x) => {
+    const p = byId.get(x.product_id);
+    if (willBeWholesale && p) return p.price_wholesale ?? p.price;
+    if (x.id && x.unit_price != null) return x.unit_price;
+    if (!p) return x.unit_price ?? 0;
+    return wholesaleNow ? (p.price_wholesale ?? p.price) : p.price;
+  };
+  const total = items.reduce((s, x) => s + (priceOf(x) || 0) * (Number(x.quantity) || 0), 0);
+  const itemsChanged =
+    items.length !== original.length ||
+    items.some((x) => {
+      const o = original.find((y) => y.id && y.id === x.id);
+      return !o || Number(o.quantity) !== Number(x.quantity) || o.notes.trim() !== x.notes.trim();
+    });
+  const itemsValid =
+    items.length > 0 &&
+    items.every((x) => Number.isInteger(Number(x.quantity)) && Number(x.quantity) > 0);
+  const addable = products.filter((p) => p.active);
   const [status, setStatus] = useState(order.payment_status || "pending");
   const [method, setMethod] = useState(order.payment_method || "");
   const [amount, setAmount] = useState(
@@ -1445,15 +1486,26 @@ function OrderEditForm({ order, total, canBill, onSave, onCancel }) {
     status === "pending" ||
     (method &&
       (status === "paid" || (Number.isInteger(value) && value > 0 && !payErr)));
+  const paidNow = order.amount_paid || 0;
+  const overpaid = !canBill && itemsChanged && paidNow > total;
+  const formOk = payOk && itemsValid && !overpaid;
   async function submit(e) {
     e.preventDefault();
-    if (!payOk || saving) return;
+    if (!formOk || saving) return;
     const f = new FormData(e.currentTarget);
     setSaving(true);
     const done = await onSave(order.id, {
       customer_name: String(f.get("customer_name") || ""),
       customer_phone: String(f.get("customer_phone") || ""),
       delivery_address: String(f.get("delivery_address") || ""),
+      ...(itemsChanged && {
+        items: items.map((x) => ({
+          id: x.id || null,
+          product_id: x.product_id,
+          quantity: Number(x.quantity),
+          notes: x.notes || "",
+        })),
+      }),
       ...(canBill && {
         payment_status: status,
         payment_method: status === "pending" ? null : method || null,
@@ -1494,6 +1546,143 @@ function OrderEditForm({ order, total, canBill, onSave, onCancel }) {
           />
         </label>
       </div>
+      <fieldset className="edititems">
+        <legend>Productos del pedido</legend>
+        <ul>
+          {items.map((x) => {
+            const locked = x.id && x.status !== "pending";
+            const qty = Number(x.quantity) || 0;
+            return (
+              <li key={x.key} className={locked ? "locked" : ""}>
+                <span className="cartthumb" aria-hidden="true">
+                  {x.image_url ? (
+                    <img src={x.image_url} alt="" width="44" height="44" />
+                  ) : (
+                    <Package size={16} />
+                  )}
+                </span>
+                <div className="edititem-info">
+                  <b>{x.name}</b>
+                  <small>
+                    {fmtMoney(priceOf(x))} c/u
+                    {qty > 1 && <> · {fmtMoney(priceOf(x) * qty)}</>}
+                    {!x.id && <> · nuevo</>}
+                  </small>
+                  {locked && (
+                    <span className={"pill " + x.status}>
+                      {labels[x.status]} · no se puede modificar
+                    </span>
+                  )}
+                </div>
+                <div className="stepper">
+                  <button
+                    type="button"
+                    aria-label={`Restar uno a ${x.name}`}
+                    disabled={locked || qty <= 1}
+                    onClick={() => editItem(x.key, "quantity", Math.max(1, qty - 1))}
+                  >
+                    <Minus size={14} aria-hidden="true" />
+                  </button>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    disabled={locked}
+                    value={x.quantity}
+                    onChange={(e) => editItem(x.key, "quantity", e.target.value)}
+                    aria-label={`Cantidad de ${x.name}`}
+                  />
+                  <button
+                    type="button"
+                    aria-label={`Sumar uno a ${x.name}`}
+                    disabled={locked}
+                    onClick={() => editItem(x.key, "quantity", qty + 1)}
+                  >
+                    <Plus size={14} aria-hidden="true" />
+                  </button>
+                </div>
+                <input
+                  className="edititem-notes"
+                  placeholder="Personalización"
+                  aria-label={`Personalización de ${x.name}`}
+                  disabled={locked}
+                  value={x.notes}
+                  onChange={(e) => editItem(x.key, "notes", e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="iconbtn"
+                  aria-label={`Quitar ${x.name}`}
+                  disabled={locked || items.length === 1}
+                  title={items.length === 1 ? "El pedido debe tener al menos un producto" : undefined}
+                  onClick={() => setItems((xs) => xs.filter((y) => y.key !== x.key))}
+                >
+                  <Trash2 size={16} aria-hidden="true" />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        <div className="edititem-add">
+          <select
+            value={addId}
+            onChange={(e) => setAddId(e.target.value)}
+            aria-label="Producto para agregar"
+          >
+            <option value="">Agregar otro producto…</option>
+            {addable.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} — {fmtMoney(wholesaleNow ? (p.price_wholesale ?? p.price) : p.price)}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="secondary compact"
+            disabled={!addId}
+            onClick={() => {
+              const p = byId.get(addId);
+              if (!p) return;
+              setItems((xs) => [
+                ...xs,
+                {
+                  key: `new-${Date.now()}`,
+                  id: null,
+                  product_id: p.id,
+                  quantity: 1,
+                  notes: "",
+                  status: "pending",
+                  unit_price: null,
+                  name: p.name,
+                  image_url: p.image_url || null,
+                },
+              ]);
+              setAddId("");
+            }}
+          >
+            <Plus size={15} aria-hidden="true" /> Agregar
+          </button>
+        </div>
+        <div className="edititem-total">
+          <span>
+            Nuevo total{wholesaleNow ? " (precio mayorista)" : ""}
+          </span>
+          <b>{fmtMoney(total)}</b>
+        </div>
+        {willBeWholesale && (
+          <p className="fieldhelp">
+            Con {units} unidades el pedido pasa a precio mayorista y se
+            recalculan todos los precios.
+          </p>
+        )}
+        {overpaid && (
+          <p className="fielderror">
+            Lo abonado ({fmtMoney(paidNow)}) supera el nuevo total. Pide a
+            Administración o Facturación que ajuste el pago.
+          </p>
+        )}
+      </fieldset>
       {canBill && (
         <div className="editgrid">
           <fieldset className="choicegroup span2">
@@ -1568,7 +1757,7 @@ function OrderEditForm({ order, total, canBill, onSave, onCancel }) {
         >
           Cancelar
         </button>
-        <button className="compact" disabled={!payOk || saving}>
+        <button className="compact" disabled={!formOk || saving}>
           {saving && <Loader2 size={15} className="spin" aria-hidden="true" />}
           {saving ? "Guardando…" : "Guardar cambios"}
         </button>
@@ -1698,7 +1887,7 @@ function PaymentPanel({ order, total, canBill, onPay }) {
     </div>
   );
 }
-function Orders({ orders, admin, busy, changeStatus, canBill, onPay, userId, canSell, onEdit }) {
+function Orders({ orders, admin, busy, changeStatus, canBill, onPay, userId, canSell, onEdit, products = [] }) {
   const [filter, setFilter] = useState("all");
   const [photo, setPhoto] = useState(null);
   const [editingId, setEditingId] = useState(null);
@@ -1775,7 +1964,7 @@ function Orders({ orders, admin, busy, changeStatus, canBill, onPay, userId, can
           {editingId === o.id && (
             <OrderEditForm
               order={o}
-              total={orderTotal(o)}
+              products={products}
               canBill={canBill}
               onSave={onEdit}
               onCancel={() => setEditingId(null)}
