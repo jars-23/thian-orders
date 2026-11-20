@@ -133,6 +133,12 @@ function App() {
   const seesProduction = hasRole("production", "sales_production");
   // Debe coincidir con register_payment (SQL): Administrador y Facturación.
   const canBill = hasRole("admin", "billing");
+  // En Pedidos, quien vende (incluido el Administrador) ve solo los pedidos
+  // que generó. Facturación y Supervisor siguen viendo todos; Producción y el
+  // Resumen general trabajan con todos los pedidos.
+  const visibleOrders = canSell
+    ? orders.filter((o) => o.seller_id === session?.user?.id)
+    : orders;
   const message = (err, ok) => {
     setError(err?.message || "");
     setNotice(err ? "" : ok || "Guardado correctamente");
@@ -709,7 +715,7 @@ function App() {
         )}
         {tab === "orders" && (
           <Orders
-            orders={orders}
+            orders={visibleOrders}
             admin={canProduce}
             busy={busy}
             changeStatus={changeStatus}
@@ -1960,7 +1966,9 @@ function Orders({ orders, admin, busy, changeStatus, canBill, userId, canSell, o
         </label>
       </div>
       {!filtered.length && (
-        <div className="panel">No hay pedidos para mostrar.</div>
+        <div className="panel">
+          {canSell && !orders.length ? "Aún no has generado pedidos." : "No hay pedidos para mostrar."}
+        </div>
       )}
       {filtered.map((o) => (
         <article className="panel order" key={o.id}>
