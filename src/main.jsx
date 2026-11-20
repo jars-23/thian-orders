@@ -395,16 +395,6 @@ function App() {
     if (!error) await reload();
     return !error;
   }
-  async function registerPayment(orderId, amount, method) {
-    const { error } = await supabase.rpc("register_payment", {
-      p_order_id: orderId,
-      p_amount: amount,
-      p_method: method,
-    });
-    message(error, "Pago registrado");
-    if (!error) await reload();
-    return !error;
-  }
   async function changeStatus(id, status) {
     setBusy(true);
     const { error } = await supabase.rpc("set_order_item_status", {
@@ -642,7 +632,6 @@ function App() {
               busy={busy}
               changeStatus={changeStatus}
               canBill={canBill}
-              onPay={registerPayment}
               userId={session?.user?.id}
               canSell={canSell}
               onEdit={updateOrder}
@@ -657,7 +646,6 @@ function App() {
             busy={busy}
             changeStatus={changeStatus}
             canBill={canBill}
-            onPay={registerPayment}
             userId={session?.user?.id}
             canSell={canSell}
             onEdit={updateOrder}
@@ -960,26 +948,11 @@ function UsernameEditor({ user, busy, onSave }) {
     </div>
   );
 }
-function OrderForm({ products, busy, onSubmit }) {
+// Catálogo visual (categorías, búsqueda y tarjetas). Se usa al crear el
+// pedido y en la ventana "Agregar productos" al editarlo.
+function ProductCatalog({ products, wholesale, inCart, onAdd, titleId, title = "Catálogo" }) {
   const [cat, setCat] = useState("all");
   const [query, setQuery] = useState("");
-  const [lines, setLines] = useState([]);
-  const [wholesaleChoice, setWholesaleChoice] = useState(false);
-  const [payStatus, setPayStatus] = useState("pending");
-  const [payMethod, setPayMethod] = useState("");
-  const [amountPaid, setAmountPaid] = useState("");
-  const nextKey = useRef(0);
-  // La barra inferior solo aparece mientras el total del pedido no se ve.
-  const footRef = useRef(null);
-  const [footVisible, setFootVisible] = useState(false);
-  useEffect(() => {
-    const el = footRef.current;
-    if (!el || typeof IntersectionObserver === "undefined") return;
-    const io = new IntersectionObserver(([e]) => setFootVisible(e.isIntersecting));
-    io.observe(el);
-    return () => io.disconnect();
-  }, []);
-  const byId = new Map(products.map((p) => [p.id, p]));
   const catOf = (p) => p.category || "Otros";
   const categories = [...new Set(products.map(catOf))];
   const q = query.trim().toLowerCase();
@@ -990,66 +963,10 @@ function OrderForm({ products, busy, onSubmit }) {
         p.name.toLowerCase().includes(q) ||
         (p.description || "").toLowerCase().includes(q)),
   );
-  const newLine = (product_id) => ({
-    key: nextKey.current++,
-    product_id,
-    quantity: 1,
-    notes: "",
-  });
-  // Suma a la línea sin personalización del mismo producto; si no hay, crea una.
-  const add = (p) =>
-    setLines((ls) => {
-      const i = ls.findIndex((l) => l.product_id === p.id && !l.notes.trim());
-      return i >= 0
-        ? ls.map((l, j) =>
-            j === i ? { ...l, quantity: Number(l.quantity) + 1 } : l,
-          )
-        : [...ls, newLine(p.id)];
-    });
-  const edit = (key, k, v) =>
-    setLines((ls) => ls.map((l) => (l.key === key ? { ...l, [k]: v } : l)));
-  const remove = (key) => setLines((ls) => ls.filter((l) => l.key !== key));
-  const inCart = (id) =>
-    lines
-      .filter((l) => l.product_id === id)
-      .reduce((s, l) => s + (Number(l.quantity) || 0), 0);
-  const units = lines.reduce((s, l) => s + (Number(l.quantity) || 0), 0);
-  const wholesaleAuto = units >= WHOLESALE_MIN_UNITS;
-  const wholesale = wholesaleAuto || wholesaleChoice;
-  const unitPrice = (p) =>
-    p ? (wholesale ? (p.price_wholesale ?? p.price) : p.price) : null;
-  const total = lines.reduce(
-    (s, l) => s + (unitPrice(byId.get(l.product_id)) || 0) * (Number(l.quantity) || 0),
-    0,
-  );
-  const paid = Number(amountPaid);
-  const payError =
-    payStatus === "partial" && amountPaid !== "" && total > 0 && paid >= total
-      ? "El abono debe ser menor al total. Si paga todo, usa Pago completo."
-      : "";
-  const payValid =
-    payStatus === "pending" ||
-    (payMethod &&
-      (payStatus === "paid" ||
-        (Number.isInteger(paid) && paid > 0 && !payError)));
-  const valid =
-    payValid &&
-    lines.length > 0 &&
-    lines.every((l) => Number.isInteger(Number(l.quantity)) && Number(l.quantity) > 0);
-  const scrollToCart = () =>
-    footRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   return (
-    <form className="orderlayout" onSubmit={(e) =>
-        onSubmit(e, lines, wholesale, {
-          status: payStatus,
-          method: payStatus === "pending" ? null : payMethod || null,
-          amount: payStatus === "partial" ? paid : null,
-        })
-      }
-    >
-      <section className="panel catalog" aria-labelledby="catalog-title">
+    <>
         <div className="catalog-head">
-          <h2 id="catalog-title">Catálogo</h2>
+          <h2 id={titleId}>{title}</h2>
           <input
             type="search"
             className="catalog-search"
@@ -1057,6 +974,7 @@ function OrderForm({ products, busy, onSubmit }) {
             aria-label="Buscar producto"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && e.preventDefault()}
           />
         </div>
         <div className="chips" role="group" aria-label="Categorías">
@@ -1122,7 +1040,7 @@ function OrderForm({ products, busy, onSubmit }) {
                       <button
                         type="button"
                         className="compact"
-                        onClick={() => add(p)}
+                        onClick={() => onAdd(p)}
                         aria-label={`Agregar ${p.name}`}
                       >
                         <Plus size={16} aria-hidden="true" /> Agregar
@@ -1134,6 +1052,92 @@ function OrderForm({ products, busy, onSubmit }) {
             })}
           </div>
         )}
+    </>
+  );
+}
+function OrderForm({ products, busy, onSubmit }) {
+  const [lines, setLines] = useState([]);
+  const [wholesaleChoice, setWholesaleChoice] = useState(false);
+  const [payStatus, setPayStatus] = useState("pending");
+  const [payMethod, setPayMethod] = useState("");
+  const [amountPaid, setAmountPaid] = useState("");
+  const nextKey = useRef(0);
+  // La barra inferior solo aparece mientras el total del pedido no se ve.
+  const footRef = useRef(null);
+  const [footVisible, setFootVisible] = useState(false);
+  useEffect(() => {
+    const el = footRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([e]) => setFootVisible(e.isIntersecting));
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  const byId = new Map(products.map((p) => [p.id, p]));
+  const newLine = (product_id) => ({
+    key: nextKey.current++,
+    product_id,
+    quantity: 1,
+    notes: "",
+  });
+  // Suma a la línea sin personalización del mismo producto; si no hay, crea una.
+  const add = (p) =>
+    setLines((ls) => {
+      const i = ls.findIndex((l) => l.product_id === p.id && !l.notes.trim());
+      return i >= 0
+        ? ls.map((l, j) =>
+            j === i ? { ...l, quantity: Number(l.quantity) + 1 } : l,
+          )
+        : [...ls, newLine(p.id)];
+    });
+  const edit = (key, k, v) =>
+    setLines((ls) => ls.map((l) => (l.key === key ? { ...l, [k]: v } : l)));
+  const remove = (key) => setLines((ls) => ls.filter((l) => l.key !== key));
+  const inCart = (id) =>
+    lines
+      .filter((l) => l.product_id === id)
+      .reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+  const units = lines.reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+  const wholesaleAuto = units >= WHOLESALE_MIN_UNITS;
+  const wholesale = wholesaleAuto || wholesaleChoice;
+  const unitPrice = (p) =>
+    p ? (wholesale ? (p.price_wholesale ?? p.price) : p.price) : null;
+  const total = lines.reduce(
+    (s, l) => s + (unitPrice(byId.get(l.product_id)) || 0) * (Number(l.quantity) || 0),
+    0,
+  );
+  const paid = Number(amountPaid);
+  const payError =
+    payStatus === "partial" && amountPaid !== "" && total > 0 && paid >= total
+      ? "El abono debe ser menor al total. Si paga todo, usa Pago completo."
+      : "";
+  const payValid =
+    payStatus === "pending" ||
+    (payMethod &&
+      (payStatus === "paid" ||
+        (Number.isInteger(paid) && paid > 0 && !payError)));
+  const valid =
+    payValid &&
+    lines.length > 0 &&
+    lines.every((l) => Number.isInteger(Number(l.quantity)) && Number(l.quantity) > 0);
+  const scrollToCart = () =>
+    footRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  return (
+    <form className="orderlayout" onSubmit={(e) =>
+        onSubmit(e, lines, wholesale, {
+          status: payStatus,
+          method: payStatus === "pending" ? null : payMethod || null,
+          amount: payStatus === "partial" ? paid : null,
+        })
+      }
+    >
+      <section className="panel catalog" aria-labelledby="catalog-title">
+        <ProductCatalog
+          products={products}
+          wholesale={wholesale}
+          inCart={inCart}
+          onAdd={add}
+          titleId="catalog-title"
+        />
       </section>
 
       <div className="orderside" id="order-side">
@@ -1388,6 +1392,53 @@ function OrderForm({ products, busy, onSubmit }) {
     </form>
   );
 }
+// Ventana modal: Esc, clic fuera o botón Cerrar la cierran; el foco vuelve
+// al botón que la abrió.
+function Modal({ title, onClose, children, footer }) {
+  const boxRef = useRef(null);
+  const titleId = useRef(`modal-${Math.random().toString(36).slice(2)}`).current;
+  useEffect(() => {
+    const prev = document.activeElement;
+    boxRef.current?.querySelector("input, button")?.focus();
+    const onKey = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = overflow;
+      prev?.focus?.();
+    };
+  }, []);
+  return (
+    <div
+      className="modal-backdrop"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        ref={boxRef}
+      >
+        <div className="modal-head">
+          <h2 id={titleId}>{title}</h2>
+          <button
+            type="button"
+            className="iconbtn"
+            onClick={onClose}
+            aria-label="Cerrar"
+          >
+            <X size={20} aria-hidden="true" />
+          </button>
+        </div>
+        <div className="modal-body">{children}</div>
+        {footer && <div className="modal-foot">{footer}</div>}
+      </div>
+    </div>
+  );
+}
 // Foto ampliada: Esc, clic fuera o botón Cerrar la cierran.
 function Lightbox({ photo, onClose }) {
   const closeRef = useRef(null);
@@ -1445,7 +1496,37 @@ function OrderEditForm({ order, products = [], canBill, onSave, onCancel }) {
     image_url: i.products?.image_url || byId.get(i.product_id)?.image_url || null,
   }));
   const [items, setItems] = useState(original);
-  const [addId, setAddId] = useState("");
+  const [picking, setPicking] = useState(false);
+  // Desde el catálogo: suma a la línea pendiente sin personalización del
+  // mismo producto; si no hay, agrega una nueva.
+  const addFromCatalog = (p) =>
+    setItems((xs) => {
+      const i = xs.findIndex(
+        (x) => x.product_id === p.id && x.status === "pending" && !x.notes.trim(),
+      );
+      if (i >= 0)
+        return xs.map((x, j) =>
+          j === i ? { ...x, quantity: (Number(x.quantity) || 0) + 1 } : x,
+        );
+      return [
+        ...xs,
+        {
+          key: `new-${p.id}-${Date.now()}`,
+          id: null,
+          product_id: p.id,
+          quantity: 1,
+          notes: "",
+          status: "pending",
+          unit_price: null,
+          name: p.name,
+          image_url: p.image_url || null,
+        },
+      ];
+    });
+  const countOf = (id) =>
+    items
+      .filter((x) => x.product_id === id)
+      .reduce((s, x) => s + (Number(x.quantity) || 0), 0);
   const editItem = (key, k, v) =>
     setItems((xs) => xs.map((x) => (x.key === key ? { ...x, [k]: v } : x)));
   const units = items.reduce((s, x) => s + (Number(x.quantity) || 0), 0);
@@ -1625,45 +1706,40 @@ function OrderEditForm({ order, products = [], canBill, onSave, onCancel }) {
           })}
         </ul>
         <div className="edititem-add">
-          <select
-            value={addId}
-            onChange={(e) => setAddId(e.target.value)}
-            aria-label="Producto para agregar"
-          >
-            <option value="">Agregar otro producto…</option>
-            {addable.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} — {fmtMoney(wholesaleNow ? (p.price_wholesale ?? p.price) : p.price)}
-              </option>
-            ))}
-          </select>
           <button
             type="button"
             className="secondary compact"
-            disabled={!addId}
-            onClick={() => {
-              const p = byId.get(addId);
-              if (!p) return;
-              setItems((xs) => [
-                ...xs,
-                {
-                  key: `new-${Date.now()}`,
-                  id: null,
-                  product_id: p.id,
-                  quantity: 1,
-                  notes: "",
-                  status: "pending",
-                  unit_price: null,
-                  name: p.name,
-                  image_url: p.image_url || null,
-                },
-              ]);
-              setAddId("");
-            }}
+            onClick={() => setPicking(true)}
           >
-            <Plus size={15} aria-hidden="true" /> Agregar
+            <Plus size={15} aria-hidden="true" /> Agregar productos
           </button>
         </div>
+        {picking && (
+          <Modal
+            title="Agregar productos"
+            onClose={() => setPicking(false)}
+            footer={
+              <>
+                <span>
+                  <b>{units}</b> {units === 1 ? "unidad" : "unidades"} ·{" "}
+                  <b>{fmtMoney(total)}</b>
+                </span>
+                <button type="button" onClick={() => setPicking(false)}>
+                  Listo
+                </button>
+              </>
+            }
+          >
+            <ProductCatalog
+              products={addable}
+              wholesale={wholesaleNow}
+              inCart={countOf}
+              onAdd={addFromCatalog}
+              titleId={`catalog-${order.id}`}
+              title="Catálogo"
+            />
+          </Modal>
+        )}
         <div className="edititem-total">
           <span>
             Nuevo total{wholesaleNow ? " (precio mayorista)" : ""}
@@ -1765,129 +1841,30 @@ function OrderEditForm({ order, products = [], canBill, onSave, onCancel }) {
     </form>
   );
 }
-function PaymentPanel({ order, total, canBill, onPay }) {
-  const paid = order.amount_paid || 0;
-  const balance = Math.max(0, total - paid);
-  const [open, setOpen] = useState(false);
-  const [amount, setAmount] = useState("");
-  const [method, setMethod] = useState(order.payment_method || "");
-  const [saving, setSaving] = useState(false);
-  const value = Number(amount);
-  const err =
-    amount !== "" && value > balance
-      ? `No puede superar el saldo (${fmtMoney(balance)}).`
-      : "";
-  const ok = method && Number.isInteger(value) && value > 0 && !err;
+// Historial de pagos del pedido (los cambios de pago se hacen en Editar).
+function PaymentHistory({ order }) {
   const payments = [...(order.order_payments || [])].sort((a, b) =>
     a.created_at.localeCompare(b.created_at),
   );
-  async function submit(e) {
-    e.preventDefault();
-    if (!ok || saving) return;
-    setSaving(true);
-    const done = await onPay(order.id, value, method);
-    setSaving(false);
-    if (done) {
-      setOpen(false);
-      setAmount("");
-    }
-  }
-  if (!payments.length && !(canBill && total > 0 && balance > 0)) return null;
+  if (!payments.length) return null;
   return (
     <div className="paybox">
-      {payments.length > 0 && (
-        <ul className="payhistory" aria-label="Pagos registrados">
-          {payments.map((p) => (
-            <li key={p.id}>
-              <span>
-                {new Date(p.created_at).toLocaleDateString("es-CO")} ·{" "}
-                {PAYMENT_METHOD[p.method]}
-                {p.note && <small> · {p.note}</small>}
-              </span>
-              <b>{fmtMoney(p.amount)}</b>
-            </li>
-          ))}
-        </ul>
-      )}
-      {canBill && total > 0 && balance > 0 && !open && (
-        <button
-          type="button"
-          className="secondary compact"
-          onClick={() => {
-            setOpen(true);
-            setAmount(String(balance));
-          }}
-        >
-          <Plus size={15} aria-hidden="true" /> Registrar pago · saldo{" "}
-          {fmtMoney(balance)}
-        </button>
-      )}
-      {open && (
-        <form className="payform" onSubmit={submit}>
-          <label>
-            Valor del pago
-            <input
-              type="number"
-              min="1"
-              max={balance}
-              step="1"
-              inputMode="numeric"
-              required
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              aria-invalid={!!err}
-              aria-describedby={`payhelp-${order.id}`}
-            />
-            <small
-              id={`payhelp-${order.id}`}
-              className={err ? "fielderror" : "fieldhelp"}
-            >
-              {err ||
-                (value > 0 && value < balance
-                  ? `Quedará un saldo de ${fmtMoney(balance - value)}.`
-                  : value === balance
-                    ? "Con este pago el pedido queda en Pago completo."
-                    : `Saldo actual: ${fmtMoney(balance)}.`)}
-            </small>
-          </label>
-          <fieldset className="choicegroup">
-            <legend>Medio de pago</legend>
-            <div className="choices">
-              {Object.entries(PAYMENT_METHOD).map(([v, l]) => (
-                <label key={v} className={method === v ? "on" : ""}>
-                  <input
-                    type="radio"
-                    name={`method-${order.id}`}
-                    value={v}
-                    required
-                    checked={method === v}
-                    onChange={() => setMethod(v)}
-                  />
-                  {l}
-                </label>
-              ))}
-            </div>
-          </fieldset>
-          <div className="payactions">
-            <button
-              type="button"
-              className="secondary compact"
-              disabled={saving}
-              onClick={() => setOpen(false)}
-            >
-              Cancelar
-            </button>
-            <button className="compact" disabled={!ok || saving}>
-              {saving && <Loader2 size={15} className="spin" aria-hidden="true" />}
-              {saving ? "Guardando…" : "Guardar pago"}
-            </button>
-          </div>
-        </form>
-      )}
+      <ul className="payhistory" aria-label="Pagos registrados">
+        {payments.map((p) => (
+          <li key={p.id}>
+            <span>
+              {new Date(p.created_at).toLocaleDateString("es-CO")} ·{" "}
+              {PAYMENT_METHOD[p.method]}
+              {p.note && <small> · {p.note}</small>}
+            </span>
+            <b>{fmtMoney(p.amount)}</b>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
-function Orders({ orders, admin, busy, changeStatus, canBill, onPay, userId, canSell, onEdit, products = [] }) {
+function Orders({ orders, admin, busy, changeStatus, canBill, userId, canSell, onEdit, products = [] }) {
   const [filter, setFilter] = useState("all");
   const [photo, setPhoto] = useState(null);
   const [editingId, setEditingId] = useState(null);
@@ -2084,12 +2061,7 @@ function Orders({ orders, admin, busy, changeStatus, canBill, onPay, userId, can
               )}
             </table>
           </div>
-          <PaymentPanel
-            order={o}
-            total={orderTotal(o)}
-            canBill={canBill}
-            onPay={onPay}
-          />
+          <PaymentHistory order={o} />
         </article>
       ))}
       <Lightbox photo={photo} onClose={() => setPhoto(null)} />
