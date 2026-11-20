@@ -25,6 +25,7 @@ import {
   Settings,
   CheckCircle2,
   Eye,
+  ArrowLeft,
 } from "lucide-react";
 import "./style.css";
 import { ThemeProvider, CssBaseline } from "@mui/material";
@@ -235,7 +236,8 @@ function App() {
     if (profile?.active && roles.length) reload();
   }, [profile?.id, profile?.active, roles.join("|")]);
   useEffect(() => {
-    if (seesProduction && !canSell && tab === "dashboard") setTab("production");
+    if (!roles.length || admin || tab !== "dashboard") return;
+    setTab(seesProduction && !canSell ? "production" : "orders");
   }, [roles.join("|")]);
   async function signin(e) {
     e.preventDefault();
@@ -581,17 +583,19 @@ function App() {
         </div>
         <nav aria-label="Navegación principal">
           {[
-            ["dashboard", LayoutDashboard, "Resumen"],
+            ...(admin ? [["dashboard", LayoutDashboard, "Resumen"]] : []),
             ...(seesProduction ? [["production", Factory, "Producción"]] : []),
             ["orders", ShoppingBag, "Pedidos"],
-            ...(canSell ? [["new", Plus, "Nuevo pedido"]] : []),
             ["products", Package, "Productos"],
             ...(admin ? [["sellers", Users, "Usuarios y roles"]] : []),
-          ].map(([id, Icon, title]) => (
+          ].map(([id, Icon, title]) => {
+            // Registrar pedido vive dentro de Pedidos
+            const on = tab === id || (id === "orders" && tab === "new");
+            return (
             <button
               key={id}
-              className={tab === id ? "selected" : ""}
-              aria-current={tab === id ? "page" : undefined}
+              className={on ? "selected" : ""}
+              aria-current={on ? "page" : undefined}
               title={navCollapsed ? title : undefined}
               onClick={() => {
                 setTab(id);
@@ -603,7 +607,8 @@ function App() {
               <Icon size={18} aria-hidden="true" />
               <span className="navlabel">{title}</span>
             </button>
-          ))}
+            );
+          })}
         </nav>
         <button
           className="logout"
@@ -632,17 +637,45 @@ function App() {
             </h1>
             <p>Chispa de luz, fe y aroma</p>
           </div>
-          <button
-            className="secondary compact"
-            onClick={reload}
-            disabled={busy}
-          >
-            <RefreshCw size={16} /> Actualizar
-          </button>
+          <div className="headactions">
+            {tab === "new" && (
+              <button
+                className="secondary compact"
+                onClick={() => {
+                  setTab("orders");
+                  setError("");
+                  setNotice("");
+                }}
+              >
+                <ArrowLeft size={16} aria-hidden="true" /> Volver a pedidos
+              </button>
+            )}
+            {tab !== "new" && (
+              <button
+                className="secondary compact"
+                onClick={reload}
+                disabled={busy}
+              >
+                <RefreshCw size={16} aria-hidden="true" /> Actualizar
+              </button>
+            )}
+            {tab === "orders" && canSell && (
+              <button
+                className="compact"
+                onClick={() => {
+                  setTab("new");
+                  setError("");
+                  setNotice("");
+                }}
+              >
+                <Plus size={16} aria-hidden="true" /> Registrar pedido
+              </button>
+            )}
+          </div>
         </header>
         {error && <div className="alert error">{error}</div>}
         {notice && <div className="alert success">{notice}</div>}
-        {tab === "dashboard" && (
+        {tab === "dashboard" && admin && (
           <>
             <div className="stats">
               {[

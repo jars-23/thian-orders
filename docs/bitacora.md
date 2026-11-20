@@ -150,6 +150,7 @@ flowchart LR
 | Editar pedido: "Agregar productos" abre el catálogo visual en una ventana; se quita el botón "Registrar pago" (los pagos se ajustan en Editar; el historial sigue visible) | ✅ publicado |
 | Migración `20261120_wholesale_12_units.sql`: precio mayorista desde 12 unidades (antes 10) en `create_order` y `update_order`; la app usa `WHOLESALE_MIN_UNITS = 12` | ✅ ejecutada y publicada |
 | Vista **Producción** (solo roles Producción y Ventas y Producción): tablero por pedido (Pendientes / En proceso / Finalizados según el estado de sus productos), conteos, búsqueda, filtros por entrega, avance y detalle con estado por producto; quien solo produce entra directo aquí | ✅ publicado |
+| **Resumen general** solo para el Administrador (los demás entran a Pedidos o Producción); "Nuevo pedido" sale del menú y queda como botón **Registrar pedido** dentro de Pedidos, con "Volver a pedidos" | ✅ publicado |
 | Pedido con catálogo visual: categorías arriba, buscador, tarjetas con foto y precio, resumen con cantidades, personalización y total estimado; admin sube la foto de cada producto (se reduce a ~1000 px WebP) | ⏳ falta verlo con sesión iniciada |
 
 ### Próximos pasos

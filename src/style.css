@@ -1487,3 +1487,11 @@ span.pd-photo { cursor: default }
     .statusswitch { width: 100% }
     .statusswitch button { flex: 1; padding: 8px 6px }
 }
+
+/* Acciones de la cabecera (Actualizar, Registrar pedido, Volver) */
+.headactions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px }
+@media (max-width: 760px) {
+    header:has(> .headactions) { flex-wrap: wrap }
+    .headactions { width: 100%; justify-content: stretch }
+    .headactions > button { flex: 1 1 auto }
+}
