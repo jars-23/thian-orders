@@ -1495,3 +1495,98 @@ span.pd-photo { cursor: default }
     .headactions { width: 100%; justify-content: stretch }
     .headactions > button { flex: 1 1 auto }
 }
+
+/* ---------- Domicilio en el pedido ---------- */
+.cartbreak { margin: 14px 0 0; display: grid; gap: 4px; font-size: .85rem; color: var(--text-muted) }
+.cartbreak div { display: flex; justify-content: space-between; gap: 12px }
+.cartbreak dd { margin: 0; font-variant-numeric: tabular-nums }
+tfoot tr.subrow td { font-weight: 500; color: var(--text-muted) }
+.pill.invoiced-pill { background: var(--success-bg); color: var(--success) }
+.edititem-total small { font-weight: 500; color: var(--text-muted) }
+
+/* ---------- Facturación ---------- */
+.billing { display: grid; gap: 16px }
+.pstat b.money { font-size: 1.25rem }
+.billlist { display: grid; gap: 10px }
+.billrow {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto; align-items: center; gap: 14px;
+    padding: 14px 16px; background: var(--surface); border: 1px solid var(--border);
+    border-left: 3px solid var(--info); border-radius: 0 var(--radius) var(--radius) 0;
+}
+.billrow.ready { border-left-color: var(--success) }
+.br-main { display: grid; gap: 3px; min-width: 0 }
+.br-main b { font-size: .95rem; overflow-wrap: anywhere }
+.br-main small { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; color: var(--text-muted); font-size: .8rem }
+.br-money { display: grid; justify-items: end; gap: 2px; font-variant-numeric: tabular-nums; white-space: nowrap }
+.br-money small { font-size: .75rem; color: var(--text-muted) }
+.modal-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end }
+.modal-foot .fieldhelp { margin: 0; max-width: 46ch }
+
+/* Documento de factura (pantalla e impresión) */
+.invoice-doc {
+    max-width: 760px; margin: 0 auto; padding: 32px; background: #FFFFFF; color: #2B1D14;
+    border: 1px solid var(--border); border-radius: var(--radius); font-size: .9rem;
+}
+.invoice-doc.draft { background-image: repeating-linear-gradient(-45deg, transparent 0 22px, rgba(191, 82, 25, .035) 22px 44px) }
+.inv-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding-bottom: 16px; margin-bottom: 18px; border-bottom: 2px solid #BF5219 }
+.inv-brand { font-size: 1.6rem; font-weight: 700; color: #BF5219; letter-spacing: .02em }
+.inv-head small { display: block; color: #6B5A4E }
+.inv-no { display: grid; justify-items: end; text-align: right; gap: 2px }
+.inv-no span { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: #6B5A4E }
+.inv-no b { font-size: 1.25rem; font-variant-numeric: tabular-nums }
+.inv-parties { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px }
+.inv-parties h3 { margin: 0 0 4px; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: #6B5A4E }
+.inv-parties p { margin: 0 0 2px }
+.inv-table { width: 100%; border-collapse: collapse; margin-bottom: 14px }
+.inv-table th { text-align: left; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: #6B5A4E; padding: 8px 6px; border-bottom: 1px solid #E5DAD0; background: none }
+.inv-table td { padding: 8px 6px; border-bottom: 1px solid #F0E8E0; vertical-align: top }
+.inv-table td small { display: block; color: #6B5A4E; font-size: .78rem }
+.inv-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap }
+.inv-totals { margin: 0 0 0 auto; max-width: 340px; display: grid; gap: 6px }
+.inv-totals div { display: flex; justify-content: space-between; gap: 16px }
+.inv-totals dt { color: #6B5A4E }
+.inv-totals dd { margin: 0; font-variant-numeric: tabular-nums; white-space: nowrap }
+.inv-totals .inv-total { padding-top: 8px; border-top: 1px solid #E5DAD0; font-weight: 700; font-size: 1.05rem }
+.inv-totals .inv-total dt { color: inherit }
+.inv-totals .inv-balance { padding: 8px 10px; margin-top: 4px; background: #FBEFE6; border-radius: 8px; font-weight: 700 }
+.inv-totals .inv-balance dt { color: #8A3A10 }
+.inv-foot { margin-top: 24px; text-align: center; color: #6B5A4E; font-size: .82rem }
+
+.print-root { display: none }
+@media print {
+    @page { size: letter; margin: 14mm }
+    body { background: #FFFFFF !important }
+    body > *:not(.print-root) { display: none !important }
+    .print-root { display: block }
+    .print-root .invoice-doc { border: 0; padding: 0; max-width: none }
+}
+
+@media (max-width: 1100px) {
+    .billrow { grid-template-columns: minmax(0, 1fr) auto; }
+    .billrow .br-money { justify-items: start }
+}
+@media (max-width: 760px) {
+    .billrow > button { grid-column: 1 / -1 }
+    .invoice-doc { padding: 18px; font-size: .85rem }
+    .inv-head { flex-direction: column }
+    .inv-no { justify-items: start; text-align: left }
+    .inv-parties { grid-template-columns: 1fr }
+    .modal-foot:has(.modal-actions) { flex-direction: column; align-items: stretch }
+    .modal-actions button { flex: 1 }
+}
+
+/* ---------- Cancelar pedido ---------- */
+.pill.cancelled-pill { background: var(--danger-bg); color: var(--danger) }
+.order.cancelled { border-left: 3px solid var(--danger) }
+.order.cancelled .tablewrap, .order.cancelled .paybox { opacity: .6 }
+.cancelnote { color: var(--danger) }
+button.dangerbtn { color: var(--danger); border-color: #F5C2BD }
+button.dangerbtn:hover:not(:disabled) { background: var(--danger-bg); color: var(--danger) }
+button.dangerbtn.solid { background: var(--danger); border-color: var(--danger); color: #FFFFFF }
+button.dangerbtn.solid:hover:not(:disabled) { background: #8F1C13; color: #FFFFFF }
+.cancelform { display: grid; gap: 12px; max-width: 560px }
+.cancelform p { margin: 0 }
+.cancelform textarea { width: 100%; resize: vertical; font: inherit }
+
+/* ---------- Editar producto ---------- */
+.productedit { max-width: 720px }

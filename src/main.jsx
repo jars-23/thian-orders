@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { createPortal } from "react-dom";
 import { createClient } from "@supabase/supabase-js";
 import {
   LayoutDashboard,
@@ -26,6 +27,9 @@ import {
   CheckCircle2,
   Eye,
   ArrowLeft,
+  Receipt,
+  Printer,
+  Truck,
 } from "lucide-react";
 import "./style.css";
 import { ThemeProvider, CssBaseline } from "@mui/material";
@@ -68,6 +72,12 @@ const PAYMENT_STATUS = {
   paid: "Pago completo",
 };
 const PAYMENT_METHOD = { transfer: "Transferencia", cash: "Efectivo" };
+// Consecutivo de factura: FAC-0001
+const fmtInvoice = (n) => (n == null ? "Borrador" : `FAC-${String(n).padStart(4, "0")}`);
+const itemsTotal = (o) =>
+  (o.order_items || []).reduce((s, i) => s + (i.unit_price || 0) * i.quantity, 0);
+// Total del pedido = productos + domicilio
+const orderGrandTotal = (o) => itemsTotal(o) + (o.delivery_fee || 0);
 // Reduce la foto a máx. 1000 px y la pasa a WebP (JPEG si el navegador no
 // codifica WebP) para que el catálogo cargue rápido en el celular.
 async function resizeImage(file, max = 1000) {
@@ -100,6 +110,8 @@ function App() {
     [products, setProducts] = useState([]),
     [orders, setOrders] = useState([]),
     [sellers, setSellers] = useState([]),
+    [zones, setZones] = useState([]),
+    [invoices, setInvoices] = useState([]),
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -126,10 +138,10 @@ function App() {
   const hasRole = (...codes) => codes.some((c) => roles.includes(c));
   const admin = hasRole("admin");
   // Deben coincidir con las políticas RLS (supabase/migrate_v1_2.sql).
-  const canSell = hasRole("admin", "seller", "sales_production");
+  const canSell = hasRole("admin", "seller");
   // La pestaña Producción es solo para quien tiene rol de producción
   // (es el único lugar donde se cambia el estado de cada producto).
-  const seesProduction = hasRole("production", "sales_production");
+  const seesProduction = hasRole("production");
   // Debe coincidir con register_payment (SQL): Administrador y Facturación.
   const canBill = hasRole("admin", "billing");
   // En Pedidos, quien vende (incluido el Administrador) ve solo los pedidos
@@ -190,7 +202,7 @@ function App() {
   async function reload() {
     if (!profile?.active) return;
     setBusy(true);
-    const [p, o, sn, s, r, ur] = await Promise.all([
+    const [p, o, sn, s, r, ur, z, inv] = await Promise.all([
       supabase
         .from("products")
         .select("*")
@@ -214,6 +226,10 @@ function App() {
       admin
         ? supabase.from("user_roles").select("user_id,role_id")
         : Promise.resolve({ data: [], error: null }),
+      supabase.from("delivery_zones").select("*").eq("active", true).order("sort"),
+      canBill
+        ? supabase.from("invoices").select("*").order("created_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
     ]);
     const err = p.error || o.error || s.error || r.error || ur.error;
     if (err) message(err);
@@ -234,6 +250,11 @@ function App() {
       setSellers(s.data || []);
       setRoleCatalog(r.data || []);
       setAssignments(ur.data || []);
+      // Domicilios y facturas no bloquean el resto si fallan
+      if (z.error) console.warn("delivery_zones:", z.error.message);
+      if (inv.error) console.warn("invoices:", inv.error.message);
+      setZones(z.data || []);
+      setInvoices(inv.data || []);
     }
     setBusy(false);
   }
@@ -242,7 +263,9 @@ function App() {
   }, [profile?.id, profile?.active, roles.join("|")]);
   useEffect(() => {
     if (!roles.length || admin || tab !== "dashboard") return;
-    setTab(seesProduction && !canSell ? "production" : "orders");
+    setTab(
+      canSell ? "orders" : seesProduction ? "production" : canBill ? "billing" : "orders",
+    );
   }, [roles.join("|")]);
   async function signin(e) {
     e.preventDefault();
@@ -391,6 +414,7 @@ function App() {
       p_payment_status: payment?.status || "pending",
       p_payment_method: payment?.method || null,
       p_amount_paid: payment?.amount ?? null,
+      p_delivery_zone: f.get("delivery_zone") || null,
     });
     message(error, "Orden generada correctamente");
     if (!error) {
@@ -398,6 +422,29 @@ function App() {
       await reload();
     }
     setBusy(false);
+  }
+  async function createInvoice(orderId) {
+    setBusy(true);
+    const { data, error } = await supabase.rpc("create_invoice", { p_order_id: orderId });
+    message(error, `Factura ${fmtInvoice(data)} generada`);
+    if (!error) await reload();
+    setBusy(false);
+    return error ? null : data;
+  }
+  async function cancelOrder(orderId, reason) {
+    const { error } = await supabase.rpc("cancel_order", {
+      p_order_id: orderId,
+      p_reason: reason,
+    });
+    message(error, "Pedido cancelado");
+    if (!error) await reload();
+    return !error;
+  }
+  async function updateProduct(id, patch) {
+    const { error } = await supabase.from("products").update(patch).eq("id", id);
+    message(error, "Producto actualizado");
+    if (!error) await reload();
+    return !error;
   }
   async function updateOrder(orderId, data) {
     const { error } = await supabase.rpc("update_order", {
@@ -409,6 +456,7 @@ function App() {
       p_payment_method: data.payment_method ?? null,
       p_amount_paid: data.amount_paid ?? null,
       p_items: data.items ?? null,
+      p_delivery_zone: data.delivery_zone || null,
     });
     message(error, "Pedido actualizado");
     if (!error) await reload();
@@ -443,6 +491,7 @@ function App() {
     setBusy(false);
   }
   const [uploadingId, setUploadingId] = useState(null);
+  const [editingProduct, setEditingProduct] = useState(null);
   async function uploadProductPhoto(product, file) {
     if (!file || uploadingId) return;
     setUploadingId(product.id);
@@ -512,8 +561,10 @@ function App() {
         </div>
       </div>
     );
+  // Los pedidos cancelados no cuentan en Resumen, Producción ni Facturación.
+  const activeOrders = orders.filter((o) => !o.cancelled_at);
   const counts = { pending: 0, in_progress: 0, finished: 0 };
-  orders.forEach((o) => o.order_items?.forEach((i) => counts[i.status]++));
+  activeOrders.forEach((o) => o.order_items?.forEach((i) => counts[i.status]++));
   const initials =
     (profile.full_name || "?")
       .split(/\s+/)
@@ -581,6 +632,7 @@ function App() {
             ...(admin ? [["dashboard", LayoutDashboard, "Resumen"]] : []),
             ...(seesProduction ? [["production", Factory, "Producción"]] : []),
             ["orders", ShoppingBag, "Pedidos"],
+            ...(canBill ? [["billing", Receipt, "Facturación"]] : []),
             ["products", Package, "Productos"],
             ...(admin ? [["sellers", Users, "Usuarios y roles"]] : []),
           ].map(([id, Icon, title]) => {
@@ -627,6 +679,7 @@ function App() {
                   new: "Registrar pedido",
                   products: "Productos",
                   sellers: "Vendedores",
+                  billing: "Facturación",
                 }[tab]
               }
             </h1>
@@ -674,7 +727,7 @@ function App() {
           <>
             <div className="stats">
               {[
-                ["Pedidos", orders.length],
+                ["Pedidos", activeOrders.length],
                 ["Pendientes", counts.pending],
                 ["En proceso", counts.in_progress],
                 ["Finalizados", counts.finished],
@@ -687,18 +740,21 @@ function App() {
             </div>
             <h2>Pedidos recientes</h2>
             <Orders
-              orders={orders.slice(0, 5)}
+              orders={activeOrders.slice(0, 5)}
               busy={busy}
               canBill={canBill}
               userId={session?.user?.id}
               canSell={canSell}
               onEdit={updateOrder}
+              onCancelOrder={cancelOrder}
               products={products}
+              zones={zones}
+              invoices={invoices}
             />
           </>
         )}
         {tab === "production" && seesProduction && (
-          <Production orders={orders} onStatus={setItemStatus} />
+          <Production orders={activeOrders} onStatus={setItemStatus} />
         )}
         {tab === "orders" && (
           <Orders
@@ -708,14 +764,34 @@ function App() {
             userId={session?.user?.id}
             canSell={canSell}
             onEdit={updateOrder}
+            onCancelOrder={cancelOrder}
             products={products}
+            zones={zones}
+            invoices={invoices}
+          />
+        )}
+        {tab === "billing" && canBill && (
+          <Billing
+            orders={activeOrders}
+            invoices={invoices}
+            zones={zones}
+            busy={busy}
+            onCreate={createInvoice}
           />
         )}
         {tab === "new" && canSell && (
           <OrderForm
             products={products.filter((p) => p.active)}
+            zones={zones}
             busy={busy}
             onSubmit={createOrder}
+          />
+        )}
+        {tab === "products" && admin && editingProduct && (
+          <ProductEditModal
+            product={editingProduct}
+            onSave={updateProduct}
+            onClose={() => setEditingProduct(null)}
           />
         )}
         {tab === "products" && (
@@ -836,6 +912,13 @@ function App() {
                                   ? "Cambiar foto"
                                   : "Subir foto"}
                             </label>
+                            <button
+                              className="secondary compact"
+                              disabled={busy}
+                              onClick={() => setEditingProduct(p)}
+                            >
+                              <Pencil size={15} aria-hidden="true" /> Editar
+                            </button>
                             <button
                               className="secondary compact"
                               disabled={busy}
@@ -1114,8 +1197,9 @@ function ProductCatalog({ products, wholesale, inCart, onAdd, titleId, title = "
     </>
   );
 }
-function OrderForm({ products, busy, onSubmit }) {
+function OrderForm({ products, zones = [], busy, onSubmit }) {
   const [lines, setLines] = useState([]);
+  const [zone, setZone] = useState("");
   const [wholesaleChoice, setWholesaleChoice] = useState(false);
   const [payStatus, setPayStatus] = useState("pending");
   const [payMethod, setPayMethod] = useState("");
@@ -1160,10 +1244,13 @@ function OrderForm({ products, busy, onSubmit }) {
   const wholesale = wholesaleAuto || wholesaleChoice;
   const unitPrice = (p) =>
     p ? (wholesale ? (p.price_wholesale ?? p.price) : p.price) : null;
-  const total = lines.reduce(
+  const subtotal = lines.reduce(
     (s, l) => s + (unitPrice(byId.get(l.product_id)) || 0) * (Number(l.quantity) || 0),
     0,
   );
+  const zoneRow = zones.find((z) => z.code === zone);
+  const fee = zoneRow?.fee || 0;
+  const total = subtotal + fee;
   const paid = Number(amountPaid);
   const payError =
     payStatus === "partial" && amountPaid !== "" && total > 0 && paid >= total
@@ -1176,6 +1263,7 @@ function OrderForm({ products, busy, onSubmit }) {
         (Number.isInteger(paid) && paid > 0 && !payError)));
   const valid =
     payValid &&
+    (!zones.length || !!zone) &&
     lines.length > 0 &&
     lines.every((l) => Number.isInteger(Number(l.quantity)) && Number(l.quantity) > 0);
   const scrollToCart = () =>
@@ -1227,9 +1315,29 @@ function OrderForm({ products, busy, onSubmit }) {
               <input
                 name="delivery_address"
                 autoComplete="street-address"
-                placeholder="Calle, número, barrio, ciudad"
+                placeholder="Calle, número, barrio"
               />
             </label>
+            {zones.length > 0 && (
+              <label>
+                Municipio (domicilio)
+                <select
+                  name="delivery_zone"
+                  required
+                  value={zone}
+                  onChange={(e) => setZone(e.target.value)}
+                >
+                  <option value="" disabled>
+                    Escoge el municipio
+                  </option>
+                  {zones.map((z) => (
+                    <option key={z.code} value={z.code}>
+                      {z.name} · {z.fee ? fmtMoney(z.fee) : "sin costo"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <div className="fieldpair">
               <label>
                 Fecha de entrega
@@ -1421,6 +1529,18 @@ function OrderForm({ products, busy, onSubmit }) {
                 </small>
               </span>
             </label>
+            {zoneRow && (
+              <dl className="cartbreak">
+                <div>
+                  <dt>Productos</dt>
+                  <dd>{fmtMoney(subtotal)}</dd>
+                </div>
+                <div>
+                  <dt>Domicilio · {zoneRow.name}</dt>
+                  <dd>{fee ? fmtMoney(fee) : "Sin costo"}</dd>
+                </div>
+              </dl>
+            )}
             <div className="carttotal">
               <span>Total estimado</span>
               <strong>{fmtMoney(total)}</strong>
@@ -1542,8 +1662,12 @@ function Lightbox({ photo, onClose }) {
   );
 }
 // Editar datos del pedido. El pago solo lo ven Administrador y Facturación.
-function OrderEditForm({ order, products = [], canBill, onSave, onCancel }) {
+function OrderEditForm({ order, products = [], zones = [], invoiced = false, canBill, onSave, onCancel }) {
   const byId = new Map(products.map((p) => [p.id, p]));
+  const [zone, setZone] = useState(order.delivery_zone || "");
+  const zoneRow = zones.find((z) => z.code === zone);
+  const zoneChanged = !!zone && zone !== (order.delivery_zone || "");
+  const fee = zoneChanged ? zoneRow?.fee || 0 : order.delivery_fee || 0;
   const original = (order.order_items || []).map((i) => ({
     key: i.id,
     id: i.id,
@@ -1600,7 +1724,8 @@ function OrderEditForm({ order, products = [], canBill, onSave, onCancel }) {
     if (!p) return x.unit_price ?? 0;
     return wholesaleNow ? (p.price_wholesale ?? p.price) : p.price;
   };
-  const total = items.reduce((s, x) => s + (priceOf(x) || 0) * (Number(x.quantity) || 0), 0);
+  const total =
+    items.reduce((s, x) => s + (priceOf(x) || 0) * (Number(x.quantity) || 0), 0) + fee;
   const itemsChanged =
     items.length !== original.length ||
     items.some((x) => {
@@ -1628,7 +1753,7 @@ function OrderEditForm({ order, products = [], canBill, onSave, onCancel }) {
     (method &&
       (status === "paid" || (Number.isInteger(value) && value > 0 && !payErr)));
   const paidNow = order.amount_paid || 0;
-  const overpaid = !canBill && itemsChanged && paidNow > total;
+  const overpaid = !canBill && (itemsChanged || zoneChanged) && paidNow > total;
   const formOk = payOk && itemsValid && !overpaid;
   async function submit(e) {
     e.preventDefault();
@@ -1639,6 +1764,7 @@ function OrderEditForm({ order, products = [], canBill, onSave, onCancel }) {
       customer_name: String(f.get("customer_name") || ""),
       customer_phone: String(f.get("customer_phone") || ""),
       delivery_address: String(f.get("delivery_address") || ""),
+      ...(zoneChanged && { delivery_zone: zone }),
       ...(itemsChanged && {
         items: items.map((x) => ({
           id: x.id || null,
@@ -1683,11 +1809,38 @@ function OrderEditForm({ order, products = [], canBill, onSave, onCancel }) {
           <input
             name="delivery_address"
             defaultValue={order.delivery_address || ""}
-            placeholder="Calle, número, barrio, ciudad"
+            placeholder="Calle, número, barrio"
           />
         </label>
+        {zones.length > 0 && (
+          <label className="span2">
+            Municipio (domicilio)
+            <select
+              value={zone}
+              disabled={invoiced}
+              onChange={(e) => setZone(e.target.value)}
+            >
+              {!order.delivery_zone && (
+                <option value="" disabled>
+                  Sin definir: escoge el municipio
+                </option>
+              )}
+              {zones.map((z) => (
+                <option key={z.code} value={z.code}>
+                  {z.name} · {z.fee ? fmtMoney(z.fee) : "sin costo"}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
-      <fieldset className="edititems">
+      {invoiced && (
+        <p className="fieldhelp">
+          Este pedido ya está facturado: los productos y el domicilio no se
+          pueden cambiar.
+        </p>
+      )}
+      <fieldset className="edititems" disabled={invoiced}>
         <legend>Productos del pedido</legend>
         <ul>
           {items.map((x) => {
@@ -1803,6 +1956,7 @@ function OrderEditForm({ order, products = [], canBill, onSave, onCancel }) {
         <div className="edititem-total">
           <span>
             Nuevo total{wholesaleNow ? " (precio mayorista)" : ""}
+            {fee > 0 && <small> · incluye domicilio {fmtMoney(fee)}</small>}
           </span>
           <b>{fmtMoney(total)}</b>
         </div>
@@ -1924,17 +2078,33 @@ function PaymentHistory({ order }) {
     </div>
   );
 }
-function Orders({ orders, busy, canBill, userId, canSell, onEdit, products = [] }) {
+function Orders({ orders, busy, canBill, userId, canSell, onEdit, onCancelOrder, products = [], zones = [], invoices = [] }) {
   const [filter, setFilter] = useState("all");
+  const [cancellingId, setCancellingId] = useState(null);
   const [photo, setPhoto] = useState(null);
   const [editingId, setEditingId] = useState(null);
-  const orderTotal = (o) =>
-    (o.order_items || []).reduce((s, i) => s + (i.unit_price || 0) * i.quantity, 0);
+  const zoneName = new Map(zones.map((z) => [z.code, z.name]));
+  const invoiceOf = new Map(invoices.map((x) => [x.order_id, x]));
   // Debe coincidir con update_order (SQL).
-  const canEdit = (o) => canBill || (canSell && o.seller_id === userId);
-  const filtered = orders.filter(
-    (o) => filter === "all" || o.order_items?.some((i) => i.status === filter),
+  const canEdit = (o) => !o.cancelled_at && (canBill || (canSell && o.seller_id === userId));
+  // Debe coincidir con cancel_order (SQL): admin y Facturación siempre; el
+  // vendedor dueño solo si todo sigue pendiente. Un pedido facturado no se cancela aquí.
+  const canCancel = (o) =>
+    !!onCancelOrder &&
+    !o.cancelled_at &&
+    !invoiceOf.has(o.id) &&
+    (canBill ||
+      (canSell &&
+        o.seller_id === userId &&
+        (o.order_items || []).every((i) => i.status === "pending")));
+  const filtered = orders.filter((o) =>
+    filter === "all"
+      ? true
+      : filter === "cancelled"
+        ? !!o.cancelled_at
+        : !o.cancelled_at && o.order_items?.some((i) => i.status === filter),
   );
+  const cancelling = orders.find((o) => o.id === cancellingId);
   return (
     <>
       <div className="filter">
@@ -1947,6 +2117,7 @@ function Orders({ orders, busy, canBill, userId, canSell, onEdit, products = [] 
                 {l}
               </option>
             ))}
+            <option value="cancelled">Cancelados</option>
           </select>
         </label>
       </div>
@@ -1956,13 +2127,25 @@ function Orders({ orders, busy, canBill, userId, canSell, onEdit, products = [] 
         </div>
       )}
       {filtered.map((o) => (
-        <article className="panel order" key={o.id}>
+        <article className={"panel order" + (o.cancelled_at ? " cancelled" : "")} key={o.id}>
           <div className="orderhead">
             <div>
               <h2>
                 Pedido #{o.order_number}
+                {o.cancelled_at && <span className="pill cancelled-pill">Cancelado</span>}
                 {o.wholesale && <span className="pill wholesale-pill">Precio mayorista</span>}
+                {invoiceOf.has(o.id) && (
+                  <span className="pill invoiced-pill">
+                    Facturado {fmtInvoice(invoiceOf.get(o.id).invoice_number)}
+                  </span>
+                )}
               </h2>
+              {o.cancelled_at && (
+                <p className="cancelnote">
+                  <b>Cancelado</b> el {new Date(o.cancelled_at).toLocaleDateString("es-CO")}
+                  {o.cancel_reason && <> · Motivo: {o.cancel_reason}</>}
+                </p>
+              )}
               <p>
                 <b>Cliente:</b> {o.customer_name}{" "}
                 {o.customer_phone && `· ${o.customer_phone}`}
@@ -1972,9 +2155,10 @@ function Orders({ orders, busy, canBill, userId, canSell, onEdit, products = [] 
                 <b>Entrega:</b> {fmtDate(o.delivery_date)}
                 {o.delivery_time && ` · ${fmtTime(o.delivery_time)}`}
               </p>
-              {o.delivery_address && (
+              {(o.delivery_address || o.delivery_zone) && (
                 <p>
-                  <b>Dirección:</b> {o.delivery_address}
+                  <b>Dirección:</b> {o.delivery_address || "—"}
+                  {o.delivery_zone && <> · {zoneName.get(o.delivery_zone) || o.delivery_zone}</>}
                 </p>
               )}
               <p>
@@ -1998,12 +2182,23 @@ function Orders({ orders, busy, canBill, userId, canSell, onEdit, products = [] 
                   <Pencil size={15} aria-hidden="true" /> Editar
                 </button>
               )}
+              {canCancel(o) && editingId !== o.id && (
+                <button
+                  type="button"
+                  className="secondary compact dangerbtn"
+                  onClick={() => setCancellingId(o.id)}
+                >
+                  <X size={15} aria-hidden="true" /> Cancelar pedido
+                </button>
+              )}
             </div>
           </div>
           {editingId === o.id && (
             <OrderEditForm
               order={o}
               products={products}
+              zones={zones}
+              invoiced={invoiceOf.has(o.id)}
               canBill={canBill}
               onSave={onEdit}
               onCancel={() => setEditingId(null)}
@@ -2075,31 +2270,28 @@ function Orders({ orders, busy, canBill, userId, canSell, onEdit, products = [] 
               </tbody>
               {o.order_items?.some((i) => i.unit_price != null) && (
                 <tfoot>
+                  {o.delivery_zone && (
+                    <tr className="subrow">
+                      <td colSpan={3}>
+                        Domicilio · {zoneName.get(o.delivery_zone) || o.delivery_zone}
+                      </td>
+                      <td className="num">
+                        {o.delivery_fee ? fmtMoney(o.delivery_fee) : "Sin costo"}
+                      </td>
+                      <td />
+                    </tr>
+                  )}
                   <tr>
                     <td colSpan={3}>Total</td>
                     <td className="num">
-                      <b>
-                        {fmtMoney(
-                          o.order_items.reduce(
-                            (s, i) => s + (i.unit_price || 0) * i.quantity,
-                            0,
-                          ),
-                        )}
-                      </b>
+                      <b>{fmtMoney(orderGrandTotal(o))}</b>
                     </td>
                     <td />
                   </tr>
                   {o.payment_status === "partial" && o.amount_paid != null && (
                     <tr>
                       <td colSpan={3}>Saldo pendiente</td>
-                      <td className="num">
-                        {fmtMoney(
-                          o.order_items.reduce(
-                            (s, i) => s + (i.unit_price || 0) * i.quantity,
-                            0,
-                          ) - o.amount_paid,
-                        )}
-                      </td>
+                      <td className="num">{fmtMoney(orderGrandTotal(o) - o.amount_paid)}</td>
                       <td />
                     </tr>
                   )}
@@ -2111,7 +2303,144 @@ function Orders({ orders, busy, canBill, userId, canSell, onEdit, products = [] 
         </article>
       ))}
       <Lightbox photo={photo} onClose={() => setPhoto(null)} />
+      {cancelling && (
+        <CancelOrderModal
+          order={cancelling}
+          onConfirm={onCancelOrder}
+          onClose={() => setCancellingId(null)}
+        />
+      )}
     </>
+  );
+}
+// Ventana para cancelar un pedido: pide el motivo (obligatorio).
+function CancelOrderModal({ order, onConfirm, onClose }) {
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const paid = order.amount_paid || 0;
+  async function confirm() {
+    if (!reason.trim() || saving) return;
+    setSaving(true);
+    const ok = await onConfirm(order.id, reason.trim());
+    setSaving(false);
+    if (ok) onClose();
+  }
+  return (
+    <Modal
+      title={`Cancelar pedido #${order.order_number}`}
+      onClose={onClose}
+      footer={
+        <>
+          <span />
+          <span className="modal-actions">
+            <button type="button" className="secondary" disabled={saving} onClick={onClose}>
+              Volver
+            </button>
+            <button
+              type="button"
+              className="dangerbtn solid"
+              disabled={!reason.trim() || saving}
+              onClick={confirm}
+            >
+              {saving && <Loader2 size={16} className="spin" aria-hidden="true" />}
+              {saving ? "Cancelando…" : "Cancelar pedido"}
+            </button>
+          </span>
+        </>
+      }
+    >
+      <div className="cancelform">
+        <p>
+          El pedido de <b>{order.customer_name}</b> quedará marcado como cancelado:
+          sale de Producción y de Facturación, y ya no se podrá editar. No se borra.
+        </p>
+        {paid > 0 && (
+          <p className="fielderror">
+            Este pedido tiene {fmtMoney(paid)} abonados: recuerda gestionar la devolución.
+          </p>
+        )}
+        <label>
+          Motivo de la cancelación
+          <textarea
+            rows={3}
+            required
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Ej.: el cliente desistió del pedido"
+          />
+        </label>
+      </div>
+    </Modal>
+  );
+}
+// Ventana para editar un producto (solo Administrador). Los pedidos ya
+// creados no cambian: guardan su propio precio.
+function ProductEditModal({ product, onSave, onClose }) {
+  const [saving, setSaving] = useState(false);
+  const formId = `product-${product.id}`;
+  const num = (v) => (v === "" || v == null ? null : Number(v));
+  async function submit(e) {
+    e.preventDefault();
+    if (saving) return;
+    const f = new FormData(e.currentTarget);
+    setSaving(true);
+    const ok = await onSave(product.id, {
+      name: String(f.get("name") || "").trim(),
+      sku: String(f.get("sku") || "").trim() || null,
+      category: String(f.get("category") || "").trim() || null,
+      price: num(f.get("price")),
+      price_wholesale: num(f.get("price_wholesale")),
+      description: String(f.get("description") || "").trim() || null,
+    });
+    setSaving(false);
+    if (ok) onClose();
+  }
+  return (
+    <Modal
+      title={`Editar · ${product.name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <span className="fieldhelp">Los pedidos ya creados conservan su precio.</span>
+          <span className="modal-actions">
+            <button type="button" className="secondary" disabled={saving} onClick={onClose}>
+              Cancelar
+            </button>
+            <button type="submit" form={formId} disabled={saving}>
+              {saving && <Loader2 size={16} className="spin" aria-hidden="true" />}
+              {saving ? "Guardando…" : "Guardar cambios"}
+            </button>
+          </span>
+        </>
+      }
+    >
+      <form id={formId} className="editgrid productedit" onSubmit={submit}>
+        <label className="span2">
+          Nombre
+          <input name="name" required defaultValue={product.name} />
+        </label>
+        <label>
+          Categoría / línea
+          <input name="category" defaultValue={product.category || ""} />
+        </label>
+        <label>
+          Referencia / SKU
+          <input name="sku" defaultValue={product.sku || ""} />
+        </label>
+        <label>
+          Precio general (COP)
+          <input name="price" type="number" min="0" step="1" inputMode="numeric" defaultValue={product.price ?? ""} />
+        </label>
+        <label>
+          Precio mayorista (COP)
+          <input name="price_wholesale" type="number" min="0" step="1" inputMode="numeric" defaultValue={product.price_wholesale ?? ""} />
+        </label>
+        <label className="span2">
+          Descripción
+          <input name="description" defaultValue={product.description || ""} />
+        </label>
+      </form>
+    </Modal>
   );
 }
 // ---------------------------------------------------------------------
@@ -2381,6 +2710,332 @@ function Production({ orders, onStatus }) {
         />
       )}
       <Lightbox photo={photo} onClose={() => setPhoto(null)} />
+    </div>
+  );
+}
+// ---------------------------------------------------------------------
+// Facturación: una factura interna por entrega (pedido). Se genera con una
+// vista previa; la factura guarda una copia fija de los datos y se imprime
+// o se guarda como PDF desde el navegador.
+// ---------------------------------------------------------------------
+// Borrador de factura a partir del pedido (misma forma que la tabla invoices)
+function invoiceDraft(order, zones) {
+  const sub = itemsTotal(order);
+  const fee = order.delivery_fee || 0;
+  const total = sub + fee;
+  const paid = Math.min(order.amount_paid || 0, total);
+  return {
+    invoice_number: null,
+    created_at: new Date().toISOString(),
+    order_number: order.order_number,
+    customer_name: order.customer_name,
+    customer_phone: order.customer_phone,
+    delivery_address: order.delivery_address,
+    delivery_zone_name: zones.find((z) => z.code === order.delivery_zone)?.name || null,
+    delivery_date: order.delivery_date,
+    delivery_time: order.delivery_time,
+    wholesale: order.wholesale,
+    items: (order.order_items || []).map((i) => ({
+      name: i.products?.name || "Producto",
+      quantity: i.quantity,
+      unit_price: i.unit_price || 0,
+      notes: i.notes,
+    })),
+    subtotal: sub,
+    delivery_fee: fee,
+    total,
+    amount_paid: paid,
+    balance: total - paid,
+    payment_method: order.payment_method,
+  };
+}
+function InvoiceDoc({ inv }) {
+  const draft = inv.invoice_number == null;
+  return (
+    <article className={"invoice-doc" + (draft ? " draft" : "")}>
+      <header className="inv-head">
+        <div>
+          <div className="inv-brand">Thian Candle</div>
+          <small>Chispa de luz, fe y aroma</small>
+        </div>
+        <div className="inv-no">
+          <span>Factura</span>
+          <b>{fmtInvoice(inv.invoice_number)}</b>
+          <small>Fecha: {new Date(inv.created_at).toLocaleDateString("es-CO")}</small>
+          <small>Pedido #{inv.order_number}</small>
+        </div>
+      </header>
+      <section className="inv-parties">
+        <div>
+          <h3>Cliente</h3>
+          <p>
+            <b>{inv.customer_name}</b>
+          </p>
+          {inv.customer_phone && <p>Tel. {inv.customer_phone}</p>}
+        </div>
+        <div>
+          <h3>Entrega</h3>
+          <p>{inv.delivery_address || "—"}</p>
+          {inv.delivery_zone_name && <p>{inv.delivery_zone_name}</p>}
+          <p>
+            {fmtDate(inv.delivery_date)}
+            {inv.delivery_time && ` · ${fmtTime(inv.delivery_time)}`}
+          </p>
+        </div>
+      </section>
+      <table className="inv-table">
+        <thead>
+          <tr>
+            <th>Producto</th>
+            <th className="num">Cant.</th>
+            <th className="num">Precio</th>
+            <th className="num">Valor</th>
+          </tr>
+        </thead>
+        <tbody>
+          {inv.items.map((i, k) => (
+            <tr key={k}>
+              <td>
+                {i.name}
+                {i.notes && <small>{i.notes}</small>}
+              </td>
+              <td className="num">{i.quantity}</td>
+              <td className="num">{fmtMoney(i.unit_price)}</td>
+              <td className="num">{fmtMoney(i.unit_price * i.quantity)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <dl className="inv-totals">
+        <div>
+          <dt>Productos{inv.wholesale ? " (precio mayorista)" : ""}</dt>
+          <dd>{fmtMoney(inv.subtotal)}</dd>
+        </div>
+        <div>
+          <dt>Domicilio{inv.delivery_zone_name ? ` · ${inv.delivery_zone_name}` : ""}</dt>
+          <dd>{inv.delivery_fee ? fmtMoney(inv.delivery_fee) : "Sin costo"}</dd>
+        </div>
+        <div className="inv-total">
+          <dt>Total</dt>
+          <dd>{fmtMoney(inv.total)}</dd>
+        </div>
+        <div>
+          <dt>
+            Abonado
+            {inv.amount_paid > 0 && inv.payment_method && ` (${PAYMENT_METHOD[inv.payment_method]})`}
+          </dt>
+          <dd>{fmtMoney(inv.amount_paid)}</dd>
+        </div>
+        <div className="inv-balance">
+          <dt>Saldo a pagar</dt>
+          <dd>{fmtMoney(inv.balance)}</dd>
+        </div>
+      </dl>
+      <footer className="inv-foot">Gracias por tu compra.</footer>
+    </article>
+  );
+}
+function InvoiceModal({ inv, title, onClose, actions }) {
+  return (
+    <Modal title={title} onClose={onClose} footer={actions}>
+      <InvoiceDoc inv={inv} />
+      {/* Copia que solo aparece al imprimir */}
+      {inv.invoice_number != null &&
+        createPortal(
+          <div className="print-root">
+            <InvoiceDoc inv={inv} />
+          </div>,
+          document.body,
+        )}
+    </Modal>
+  );
+}
+function Billing({ orders, invoices, zones, busy, onCreate }) {
+  const [view, setView] = useState("todo");
+  const [query, setQuery] = useState("");
+  const [previewId, setPreviewId] = useState(null);
+  const [openInvoiceId, setOpenInvoiceId] = useState(null);
+  const invoiced = new Set(invoices.map((x) => x.order_id));
+  const q = query.trim().toLowerCase().replace("#", "");
+  const ready = (o) => (o.order_items || []).length > 0 && orderStage(o) === "finished";
+  const pending = orders
+    .filter((o) => !invoiced.has(o.id))
+    .sort(
+      (a, b) =>
+        Number(ready(b)) - Number(ready(a)) ||
+        (a.delivery_date || "9999-12-31").localeCompare(b.delivery_date || "9999-12-31"),
+    );
+  const match = (num, name) => !q || String(num).includes(q) || name?.toLowerCase().includes(q);
+  const pendingList = pending.filter((o) => match(o.order_number, o.customer_name));
+  const doneList = invoices.filter(
+    (x) => match(x.order_number, x.customer_name) || fmtInvoice(x.invoice_number).toLowerCase().includes(q),
+  );
+  const readyCount = pending.filter(ready).length;
+  const balance = invoices.reduce((s, x) => s + (x.balance || 0), 0);
+  const preview = orders.find((o) => o.id === previewId);
+  const openInv = invoices.find((x) => x.id === openInvoiceId);
+  async function generate() {
+    const n = await onCreate(preview.id);
+    if (n == null) {
+      lastCreated.current = null;
+      return;
+    }
+    setPreviewId(null);
+    setView("done");
+  }
+  // Al terminar de recargar, abre la factura recién generada
+  const lastCreated = useRef(null);
+  useEffect(() => {
+    if (!lastCreated.current) return;
+    const inv = invoices.find((x) => x.order_id === lastCreated.current);
+    if (inv) {
+      setOpenInvoiceId(inv.id);
+      lastCreated.current = null;
+    }
+  }, [invoices]);
+  return (
+    <div className="billing">
+      <div className="prod-stats">
+        <div className="pstat ps-finished"><span>Listos para facturar</span><b>{readyCount}</b></div>
+        <div className="pstat ps-in_progress"><span>En producción</span><b>{pending.length - readyCount}</b></div>
+        <div className="pstat"><span>Facturas</span><b>{invoices.length}</b></div>
+        <div className="pstat ps-pending"><span>Saldo por cobrar</span><b className="money">{fmtMoney(balance)}</b></div>
+      </div>
+      <div className="prod-tools">
+        <input
+          type="search"
+          className="prod-search"
+          placeholder="Buscar pedido, cliente o factura"
+          aria-label="Buscar pedido, cliente o factura"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <div className="chips" role="group" aria-label="Vista">
+          {[["todo", `Por facturar (${pending.length})`], ["done", `Facturadas (${invoices.length})`]].map(([v, l]) => (
+            <button key={v} type="button" className={"chip" + (view === v ? " active" : "")} aria-pressed={view === v} onClick={() => setView(v)}>
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {view === "todo" && (
+        <div className="billlist">
+          {!pendingList.length && <div className="panel empty">No hay pedidos por facturar.</div>}
+          {pendingList.map((o) => {
+            const its = o.order_items || [];
+            const done = its.filter((i) => i.status === "finished").length;
+            const isReady = ready(o);
+            const zone = zones.find((z) => z.code === o.delivery_zone);
+            return (
+              <article key={o.id} className={"billrow" + (isReady ? " ready" : "")}>
+                <div className="br-main">
+                  <b>#{o.order_number} · {o.customer_name}</b>
+                  <small>
+                    <Truck size={13} aria-hidden="true" />{" "}
+                    {zone ? `${zone.name} · ${o.delivery_fee ? fmtMoney(o.delivery_fee) : "sin costo"}` : "Sin municipio"}
+                    {o.seller_name && ` · Vendedor: ${o.seller_name}`}
+                  </small>
+                </div>
+                <DueChip order={o} done={false} />
+                <span className={"pill " + (isReady ? "finished" : "in_progress")}>
+                  {isReady ? "Listo para entregar" : `Producción ${done} de ${its.length}`}
+                </span>
+                <div className="br-money">
+                  <b>{fmtMoney(orderGrandTotal(o))}</b>
+                  <small>Saldo {fmtMoney(Math.max(orderGrandTotal(o) - (o.amount_paid || 0), 0))}</small>
+                </div>
+                <button
+                  type="button"
+                  className={isReady ? "compact" : "secondary compact"}
+                  onClick={() => setPreviewId(o.id)}
+                >
+                  <Receipt size={15} aria-hidden="true" /> Generar factura
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      {view === "done" && (
+        <div className="billlist">
+          {!doneList.length && <div className="panel empty">Aún no hay facturas.</div>}
+          {doneList.map((x) => (
+            <article key={x.id} className="billrow">
+              <div className="br-main">
+                <b>{fmtInvoice(x.invoice_number)} · {x.customer_name}</b>
+                <small>
+                  Pedido #{x.order_number} · {new Date(x.created_at).toLocaleDateString("es-CO")}
+                  {x.delivery_zone_name && ` · ${x.delivery_zone_name}`}
+                </small>
+              </div>
+              <span className={"pill " + (x.balance > 0 ? "pay-partial" : "pay-paid")}>
+                {x.balance > 0 ? `Saldo ${fmtMoney(x.balance)}` : "Pagada"}
+              </span>
+              <div className="br-money">
+                <b>{fmtMoney(x.total)}</b>
+              </div>
+              <button type="button" className="secondary compact" onClick={() => setOpenInvoiceId(x.id)}>
+                <Eye size={15} aria-hidden="true" /> Ver factura
+              </button>
+            </article>
+          ))}
+        </div>
+      )}
+
+      {preview && (
+        <InvoiceModal
+          inv={invoiceDraft(preview, zones)}
+          title={`Vista previa · Pedido #${preview.order_number}`}
+          onClose={() => setPreviewId(null)}
+          actions={
+            <>
+              <span className="fieldhelp">
+                {ready(preview)
+                  ? "Al generarla se asigna el consecutivo y ya no se pueden cambiar productos ni domicilio."
+                  : "Ojo: este pedido aún tiene productos sin finalizar."}
+              </span>
+              <span className="modal-actions">
+                <button type="button" className="secondary" onClick={() => setPreviewId(null)}>
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    lastCreated.current = preview.id;
+                    generate();
+                  }}
+                >
+                  {busy && <Loader2 size={16} className="spin" aria-hidden="true" />}
+                  Generar factura
+                </button>
+              </span>
+            </>
+          }
+        />
+      )}
+      {openInv && (
+        <InvoiceModal
+          inv={openInv}
+          title={`Factura ${fmtInvoice(openInv.invoice_number)}`}
+          onClose={() => setOpenInvoiceId(null)}
+          actions={
+            <>
+              <span>Pedido #{openInv.order_number}</span>
+              <span className="modal-actions">
+                <button type="button" className="secondary" onClick={() => setOpenInvoiceId(null)}>
+                  Cerrar
+                </button>
+                <button type="button" onClick={() => window.print()}>
+                  <Printer size={16} aria-hidden="true" /> Imprimir o guardar PDF
+                </button>
+              </span>
+            </>
+          }
+        />
+      )}
     </div>
   );
 }
