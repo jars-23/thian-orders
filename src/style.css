@@ -450,7 +450,7 @@ header p { margin: 4px 0 0; color: var(--text-muted); font-size: .88rem }
     margin-bottom: 18px;
 }
 
-.formgrid > input { align-self: end }
+.formgrid > input, .formgrid > select { align-self: end }
 
 .line {
     display: grid;

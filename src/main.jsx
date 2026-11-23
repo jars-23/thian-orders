@@ -790,6 +790,7 @@ function App() {
         {tab === "products" && admin && editingProduct && (
           <ProductEditModal
             product={editingProduct}
+            products={products}
             onSave={updateProduct}
             onClose={() => setEditingProduct(null)}
           />
@@ -806,10 +807,7 @@ function App() {
                     required
                   />
                   <input name="sku" placeholder="Referencia / SKU (opcional)" />
-                  <input
-                    name="category"
-                    placeholder="Categoría / línea (opcional)"
-                  />
+                  <CategorySelect products={products} />
                   <input
                     name="price"
                     type="number"
@@ -2373,9 +2371,60 @@ function CancelOrderModal({ order, onConfirm, onClose }) {
     </Modal>
   );
 }
+// Lista desplegable de categorías: las que ya existen en el catálogo más
+// "Nueva categoría…". El valor viaja en un campo oculto name="category".
+function CategorySelect({ products, defaultValue = "" }) {
+  const options = [
+    ...new Set(products.map((p) => p.category?.trim()).filter(Boolean)),
+  ].sort((a, b) => a.localeCompare(b, "es"));
+  const [choice, setChoice] = useState(defaultValue);
+  const [custom, setCustom] = useState("");
+  const selectRef = useRef(null);
+  // Al hacer reset() del formulario (tras crear), vuelve al valor inicial.
+  useEffect(() => {
+    const form = selectRef.current?.form;
+    if (!form) return;
+    const onReset = () => {
+      setChoice(defaultValue);
+      setCustom("");
+    };
+    form.addEventListener("reset", onReset);
+    return () => form.removeEventListener("reset", onReset);
+  }, [defaultValue]);
+  const isNew = choice === "__new__";
+  return (
+    <>
+      <select
+        ref={selectRef}
+        value={choice}
+        onChange={(e) => setChoice(e.target.value)}
+        aria-label="Categoría / línea"
+      >
+        <option value="">Sin categoría</option>
+        {options.map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+        <option value="__new__">+ Nueva categoría…</option>
+      </select>
+      {isNew && (
+        <input
+          value={custom}
+          onChange={(e) => setCustom(e.target.value)}
+          placeholder="Nombre de la nueva categoría"
+          aria-label="Nueva categoría"
+          required
+          autoFocus
+        />
+      )}
+      <input type="hidden" name="category" value={isNew ? custom : choice} />
+    </>
+  );
+}
 // Ventana para editar un producto (solo Administrador). Los pedidos ya
 // creados no cambian: guardan su propio precio.
-function ProductEditModal({ product, onSave, onClose }) {
+function ProductEditModal({ product, products = [], onSave, onClose }) {
   const [saving, setSaving] = useState(false);
   const formId = `product-${product.id}`;
   const num = (v) => (v === "" || v == null ? null : Number(v));
@@ -2421,7 +2470,7 @@ function ProductEditModal({ product, onSave, onClose }) {
         </label>
         <label>
           Categoría / línea
-          <input name="category" defaultValue={product.category || ""} />
+          <CategorySelect products={products} defaultValue={product.category || ""} />
         </label>
         <label>
           Referencia / SKU
