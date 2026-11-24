@@ -1676,3 +1676,10 @@ table.mini th, table.mini td { padding: 8px 6px }
     .upcoming li { grid-template-columns: 80px minmax(0, 1fr); }
     .up-pill { grid-column: 2; justify-self: start }
 }
+
+/* Mayorista por referencia */
+.wholesale-note { margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-muted) }
+.wholesale-note b { display: block; font-size: .9rem }
+.wholesale-note small { display: block; margin-top: 2px; font-size: .76rem; color: var(--text-muted) }
+.wholesale-note.on { border-color: var(--primary); background: var(--primary-soft) }
+.tag-wholesale { font-weight: 700; color: var(--primary) }

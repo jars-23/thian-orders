@@ -31,13 +31,13 @@ flowchart LR
 ## RPC principales
 | RPC | Quién | Qué hace |
 |---|---|---|
-| `create_order` | Vende (admin, seller) | Crea pedido; mayorista desde 12 unidades; pago inicial |
+| `create_order` | Vende (admin, seller) | Crea pedido; mayorista por referencia (12+ u. del mismo producto); domicilio; pago inicial |
 | `update_order` | Admin, billing o vendedor dueño | Edita cliente, productos pendientes y pago |
 | `set_order_item_status` | Producción | Cambia solo `order_items.status` |
 | `order_seller_names` | Todos | Nombre del vendedor de pedidos visibles |
 | `my_roles` | Todos | Roles del usuario actual |
 | `register_payment` | — | Sin uso en la UI (los pagos se ajustan en Editar) |
-| `cancel_order` (pendiente de ejecutar) | Admin, billing; vendedor dueño si todo está pendiente | Marca el pedido como cancelado con motivo (no borra) |
+| `cancel_order` | Admin, billing; vendedor dueño si todo está pendiente | Marca el pedido como cancelado con motivo (no borra) |
 
 ## Frontend (medido: `src/main.jsx`)
 - `App`: sesión, roles, carga de datos (`reload`), menú lateral y pestañas.

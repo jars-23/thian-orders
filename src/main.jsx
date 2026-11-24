@@ -67,9 +67,13 @@ const fmtMoney = (n) =>
         maximumFractionDigits: 0,
       }).format(n);
 const PRODUCT_BUCKET = "product-images";
-// Regla de negocio: desde estas unidades por pedido aplica precio mayorista.
-// Debe coincidir con c_wholesale_min_units en create_order (SQL).
+// Regla de negocio: precio mayorista POR REFERENCIA. Un producto va a precio
+// mayorista si ese producto suma estas unidades en el pedido.
+// Debe coincidir con c_wholesale_min_units en create_order / update_order (SQL).
 const WHOLESALE_MIN_UNITS = 12;
+// Precio de catálogo según las unidades de ESE producto en el pedido.
+const tierPrice = (p, units) =>
+  p ? (units >= WHOLESALE_MIN_UNITS ? (p.price_wholesale ?? p.price) : p.price) : null;
 // Deben coincidir con los CHECK de orders.payment_status / payment_method.
 const PAYMENT_STATUS = {
   pending: "Pago pendiente",
@@ -1101,7 +1105,7 @@ function UsernameEditor({ user, busy, onSave }) {
 }
 // Catálogo visual (categorías, búsqueda y tarjetas). Se usa al crear el
 // pedido y en la ventana "Agregar productos" al editarlo.
-function ProductCatalog({ products, wholesale, inCart, onAdd, titleId, title = "Catálogo" }) {
+function ProductCatalog({ products, inCart, onAdd, titleId, title = "Catálogo" }) {
   const [cat, setCat] = useState("all");
   const [query, setQuery] = useState("");
   const catOf = (p) => p.category || "Otros";
@@ -1181,10 +1185,12 @@ function ProductCatalog({ products, wholesale, inCart, onAdd, titleId, title = "
                     {p.description && <p>{p.description}</p>}
                     <div className="pcard-foot">
                       <div className="pcard-prices">
-                        <strong>{fmtMoney(wholesale ? (p.price_wholesale ?? p.price) : p.price)}</strong>
+                        <strong>{fmtMoney(tierPrice(p, n))}</strong>
                         {p.price_wholesale != null && (
                           <small>
-                            {wholesale ? "General " + fmtMoney(p.price) : "Mayorista " + fmtMoney(p.price_wholesale)}
+                            {n >= WHOLESALE_MIN_UNITS
+                              ? "Mayorista · general " + fmtMoney(p.price)
+                              : "Mayorista " + fmtMoney(p.price_wholesale) + " desde " + WHOLESALE_MIN_UNITS + " u."}
                           </small>
                         )}
                       </div>
@@ -1209,7 +1215,6 @@ function ProductCatalog({ products, wholesale, inCart, onAdd, titleId, title = "
 function OrderForm({ products, zones = [], busy, onSubmit }) {
   const [lines, setLines] = useState([]);
   const [zone, setZone] = useState("");
-  const [wholesaleChoice, setWholesaleChoice] = useState(false);
   const [payStatus, setPayStatus] = useState("pending");
   const [payMethod, setPayMethod] = useState("");
   const [amountPaid, setAmountPaid] = useState("");
@@ -1249,10 +1254,10 @@ function OrderForm({ products, zones = [], busy, onSubmit }) {
       .filter((l) => l.product_id === id)
       .reduce((s, l) => s + (Number(l.quantity) || 0), 0);
   const units = lines.reduce((s, l) => s + (Number(l.quantity) || 0), 0);
-  const wholesaleAuto = units >= WHOLESALE_MIN_UNITS;
-  const wholesale = wholesaleAuto || wholesaleChoice;
-  const unitPrice = (p) =>
-    p ? (wholesale ? (p.price_wholesale ?? p.price) : p.price) : null;
+  // Mayorista por referencia: cuenta las unidades de cada producto.
+  const unitPrice = (p) => (p ? tierPrice(p, inCart(p.id)) : null);
+  const isWholesale = (p) => !!p && p.price_wholesale != null && inCart(p.id) >= WHOLESALE_MIN_UNITS;
+  const wholesale = lines.some((l) => isWholesale(byId.get(l.product_id)));
   const subtotal = lines.reduce(
     (s, l) => s + (unitPrice(byId.get(l.product_id)) || 0) * (Number(l.quantity) || 0),
     0,
@@ -1289,7 +1294,6 @@ function OrderForm({ products, zones = [], busy, onSubmit }) {
       <section className="panel catalog" aria-labelledby="catalog-title">
         <ProductCatalog
           products={products}
-          wholesale={wholesale}
           inCart={inCart}
           onAdd={add}
           titleId="catalog-title"
@@ -1456,6 +1460,7 @@ function OrderForm({ products, zones = [], busy, onSubmit }) {
                           {qty > 1 && unitPrice(p) != null && (
                             <> · {fmtMoney(unitPrice(p) * qty)}</>
                           )}
+                          {isWholesale(p) && <> · <span className="tag-wholesale">Mayorista</span></>}
                         </small>
                       </div>
                       <button
@@ -1522,22 +1527,12 @@ function OrderForm({ products, zones = [], busy, onSubmit }) {
             </ul>
           )}
           <div className="cartfoot" ref={footRef}>
-            <label className={"wholesale" + (wholesale ? " on" : "")}>
-              <input
-                type="checkbox"
-                checked={wholesale}
-                disabled={wholesaleAuto}
-                onChange={(e) => setWholesaleChoice(e.target.checked)}
-              />
-              <span>
-                <b>Aplicar precio mayorista</b>
-                <small>
-                  {wholesaleAuto
-                    ? `Automático: el pedido tiene ${WHOLESALE_MIN_UNITS} unidades o más.`
-                    : `Se aplica automáticamente desde ${WHOLESALE_MIN_UNITS} unidades.`}
-                </small>
-              </span>
-            </label>
+            <p className={"wholesale-note" + (wholesale ? " on" : "")}>
+              <b>Precio mayorista por referencia</b>
+              <small>
+                Se aplica a cada producto desde {WHOLESALE_MIN_UNITS} unidades del mismo producto.
+              </small>
+            </p>
             {zoneRow && (
               <dl className="cartbreak">
                 <div>
@@ -1555,7 +1550,9 @@ function OrderForm({ products, zones = [], busy, onSubmit }) {
               <strong>{fmtMoney(total)}</strong>
             </div>
             <small className="carthint">
-              Calculado con el precio {wholesale ? "mayorista" : "general"}.
+              {wholesale
+                ? "Incluye precio mayorista en las referencias con " + WHOLESALE_MIN_UNITS + "+ unidades."
+                : "Calculado con el precio general."}
             </small>
             <button className="cartsubmit" disabled={busy || !valid}>
               {busy && <Loader2 size={16} className="spin" aria-hidden="true" />}
@@ -1723,24 +1720,28 @@ function OrderEditForm({ order, products = [], zones = [], invoiced = false, can
   const editItem = (key, k, v) =>
     setItems((xs) => xs.map((x) => (x.key === key ? { ...x, [k]: v } : x)));
   const units = items.reduce((s, x) => s + (Number(x.quantity) || 0), 0);
-  // Mismo criterio que update_order: 12+ unidades pasa a mayorista.
-  const willBeWholesale = !order.wholesale && units >= WHOLESALE_MIN_UNITS;
-  const wholesaleNow = order.wholesale || willBeWholesale;
-  const priceOf = (x) => {
-    const p = byId.get(x.product_id);
-    if (willBeWholesale && p) return p.price_wholesale ?? p.price;
-    if (x.id && x.unit_price != null) return x.unit_price;
-    if (!p) return x.unit_price ?? 0;
-    return wholesaleNow ? (p.price_wholesale ?? p.price) : p.price;
-  };
-  const total =
-    items.reduce((s, x) => s + (priceOf(x) || 0) * (Number(x.quantity) || 0), 0) + fee;
   const itemsChanged =
     items.length !== original.length ||
     items.some((x) => {
       const o = original.find((y) => y.id && y.id === x.id);
       return !o || Number(o.quantity) !== Number(x.quantity) || o.notes.trim() !== x.notes.trim();
     });
+  // Mismo criterio que update_order: al cambiar productos, cada línea pendiente
+  // toma el precio de su referencia (12+ unidades del producto = mayorista).
+  // Las líneas en producción o finalizadas conservan su precio guardado.
+  const priceOf = (x) => {
+    const p = byId.get(x.product_id);
+    const pending = !x.id || x.status === "pending";
+    if (!itemsChanged || !pending || !p) return x.unit_price ?? (p ? p.price : 0);
+    return tierPrice(p, countOf(x.product_id));
+  };
+  const wholesaleOf = (x) => {
+    const p = byId.get(x.product_id);
+    return !!p && p.price_wholesale != null && priceOf(x) === p.price_wholesale && countOf(x.product_id) >= WHOLESALE_MIN_UNITS;
+  };
+  const wholesaleNow = items.some(wholesaleOf);
+  const total =
+    items.reduce((s, x) => s + (priceOf(x) || 0) * (Number(x.quantity) || 0), 0) + fee;
   const itemsValid =
     items.length > 0 &&
     items.every((x) => Number.isInteger(Number(x.quantity)) && Number(x.quantity) > 0);
@@ -1870,6 +1871,7 @@ function OrderEditForm({ order, products = [], zones = [], invoiced = false, can
                     {fmtMoney(priceOf(x))} c/u
                     {qty > 1 && <> · {fmtMoney(priceOf(x) * qty)}</>}
                     {!x.id && <> · nuevo</>}
+                    {wholesaleOf(x) && <> · <span className="tag-wholesale">Mayorista</span></>}
                   </small>
                   {locked && (
                     <span className={"pill " + x.status}>
@@ -1954,7 +1956,6 @@ function OrderEditForm({ order, products = [], zones = [], invoiced = false, can
           >
             <ProductCatalog
               products={addable}
-              wholesale={wholesaleNow}
               inCart={countOf}
               onAdd={addFromCatalog}
               titleId={`catalog-${order.id}`}
@@ -1969,12 +1970,10 @@ function OrderEditForm({ order, products = [], zones = [], invoiced = false, can
           </span>
           <b>{fmtMoney(total)}</b>
         </div>
-        {willBeWholesale && (
-          <p className="fieldhelp">
-            Con {units} unidades el pedido pasa a precio mayorista y se
-            recalculan todos los precios.
-          </p>
-        )}
+        <p className="fieldhelp">
+          Precio mayorista por referencia: desde {WHOLESALE_MIN_UNITS} unidades del
+          mismo producto. Al guardar se recalculan solo los productos pendientes.
+        </p>
         {overpaid && (
           <p className="fielderror">
             Lo abonado ({fmtMoney(paidNow)}) supera el nuevo total. Pide a

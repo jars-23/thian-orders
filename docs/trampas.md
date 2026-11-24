@@ -41,3 +41,8 @@ Formato: **síntoma · causa · solución** (3 líneas). Ver [[arquitectura]] y 
 - **Síntoma:** el paso Deploy falla aunque Build y Upload artifact salen bien y el artefacto aparece en el run.
 - **Causa:** fallo intermitente de GitHub al leer el artefacto (el workflow no cambió; githubstatus en verde).
 - **Solución:** desde el hotfix `deploy-pages` el workflow tiene dos jobs (`build` → `deploy`). Si aun así falla, NO usar "Re-run failed jobs" en un run con artefacto ya subido (da "Multiple artifacts named github-pages"): lanzar un run nuevo (push o "Run workflow").
+
+## T9 · `String.replace` de JS se come los `$$` del SQL
+- **Síntoma:** tras generar SQL con un script de node, las funciones quedan con `AS $` y `END; $;`.
+- **Causa:** en `str.replace(a, b)`, `$$` dentro de `b` significa "un `$`".
+- **Solución:** usar `str.replace(a, () => b)` y contar `$$` antes/después (`grep -o '\$\$' | wc -l`).

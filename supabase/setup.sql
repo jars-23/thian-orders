@@ -869,6 +869,7 @@ DECLARE
   c_wholesale_min_units constant integer := 12;  -- mantener igual que la app
   v_id uuid; v_item jsonb; v_qty integer; v_units integer := 0;
   v_wholesale boolean; v_price integer; v_price_wholesale integer;
+  v_qty_by_product jsonb;  -- unidades por producto (regla mayorista por referencia)
   v_unit integer; v_total integer := 0; v_paid integer; v_fee integer := 0;
   v_status text := coalesce(p_payment_status, 'pending');
 BEGIN
@@ -883,13 +884,19 @@ BEGIN
     IF NOT FOUND THEN RAISE EXCEPTION 'Municipio de entrega no válido'; END IF;
   END IF;
 
-  -- 1) Unidades -> ¿precio mayorista?
+  -- 1) Cantidades válidas y unidades por referencia (mismo product_id suma).
+  --    Mayorista POR REFERENCIA: un producto va a precio mayorista si ese
+  --    producto suma 12+ unidades. p_wholesale se ignora (se mantiene la firma).
   FOR v_item IN SELECT value FROM jsonb_array_elements(p_items) LOOP
     v_qty := (v_item->>'quantity')::integer;
     IF v_qty IS NULL OR v_qty <= 0 THEN RAISE EXCEPTION 'Cantidad inválida'; END IF;
     v_units := v_units + v_qty;
   END LOOP;
-  v_wholesale := coalesce(p_wholesale, false) OR v_units >= c_wholesale_min_units;
+  SELECT coalesce(jsonb_object_agg(pid, q), '{}'::jsonb) INTO v_qty_by_product
+    FROM (SELECT x->>'product_id' AS pid, sum((x->>'quantity')::integer) AS q
+            FROM jsonb_array_elements(p_items) AS x GROUP BY 1) AS t;
+  v_wholesale := EXISTS (SELECT 1 FROM jsonb_each_text(v_qty_by_product) AS e
+                          WHERE e.value::integer >= c_wholesale_min_units);
 
   -- 2) Total con precios de la tabla products (valida que estén activos) + domicilio
   FOR v_item IN SELECT value FROM jsonb_array_elements(p_items) LOOP
@@ -897,7 +904,8 @@ BEGIN
       FROM public.products
      WHERE id = (v_item->>'product_id')::uuid AND active;
     IF NOT FOUND THEN RAISE EXCEPTION 'Producto no disponible'; END IF;
-    v_unit := CASE WHEN v_wholesale THEN coalesce(v_price_wholesale, v_price) ELSE v_price END;
+    v_unit := CASE WHEN (v_qty_by_product->>(v_item->>'product_id'))::integer >= c_wholesale_min_units
+                   THEN coalesce(v_price_wholesale, v_price) ELSE v_price END;
     v_total := v_total + coalesce(v_unit, 0) * (v_item->>'quantity')::integer;
   END LOOP;
   v_total := v_total + v_fee;
@@ -928,7 +936,8 @@ BEGIN
     INSERT INTO public.order_items (order_id, product_id, quantity, notes, unit_price)
     VALUES (v_id, (v_item->>'product_id')::uuid, (v_item->>'quantity')::integer,
             nullif(trim(v_item->>'notes'),''),
-            CASE WHEN v_wholesale THEN coalesce(v_price_wholesale, v_price) ELSE v_price END);
+            CASE WHEN (v_qty_by_product->>(v_item->>'product_id'))::integer >= c_wholesale_min_units
+                 THEN coalesce(v_price_wholesale, v_price) ELSE v_price END);
   END LOOP;
   RETURN v_id;
 END; $$;
@@ -1021,7 +1030,7 @@ BEGIN
         INSERT INTO public.order_items (order_id, product_id, quantity, notes, unit_price)
         VALUES (p_order_id, (v_item->>'product_id')::uuid, v_qty,
                 nullif(trim(v_item->>'notes'), ''),
-                CASE WHEN v_order.wholesale THEN coalesce(v_price_w, v_price) ELSE v_price END)
+                v_price)  -- el precio definitivo se fija abajo, por referencia
         RETURNING id INTO v_new_id;
         v_keep := v_keep || v_new_id;
       END IF;
@@ -1034,15 +1043,23 @@ BEGIN
     END IF;
     DELETE FROM public.order_items WHERE order_id = p_order_id AND NOT (id = ANY (v_keep));
 
-    -- Regla mayorista: 12+ unidades -> precio mayorista para todo el pedido
-    SELECT coalesce(sum(quantity), 0) INTO v_units FROM public.order_items WHERE order_id = p_order_id;
-    IF NOT v_order.wholesale AND v_units >= c_wholesale_min_units THEN
-      UPDATE public.orders SET wholesale = true WHERE id = p_order_id;
-      UPDATE public.order_items i
-         SET unit_price = coalesce(p.price_wholesale, p.price)
-        FROM public.products p
-       WHERE i.order_id = p_order_id AND p.id = i.product_id;
-    END IF;
+    -- Regla mayorista POR REFERENCIA: cada producto con 12+ unidades en el
+    -- pedido va a precio mayorista; el resto a precio general. Solo se
+    -- recalculan las líneas pendientes (las de producción conservan su precio).
+    UPDATE public.order_items i
+       SET unit_price = CASE WHEN q.units >= c_wholesale_min_units
+                             THEN coalesce(p.price_wholesale, p.price) ELSE p.price END
+      FROM public.products p,
+           (SELECT product_id, sum(quantity) AS units FROM public.order_items
+             WHERE order_id = p_order_id GROUP BY product_id) AS q
+     WHERE i.order_id = p_order_id AND i.status = 'pending'
+       AND p.id = i.product_id AND q.product_id = i.product_id;
+    UPDATE public.orders
+       SET wholesale = EXISTS (SELECT 1 FROM public.order_items
+                                WHERE order_id = p_order_id
+                                GROUP BY product_id
+                               HAVING sum(quantity) >= c_wholesale_min_units)
+     WHERE id = p_order_id;
   END IF;
 
   -- Total = productos + domicilio
@@ -1107,3 +1124,8 @@ END; $$;
 REVOKE ALL ON FUNCTION public.update_order(uuid,text,text,text,text,text,integer,jsonb,text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.update_order(uuid,text,text,text,text,text,integer,jsonb,text) TO authenticated;
 
+
+-- =====================================================================
+-- 14. Precio mayorista por referencia (migración 20261124): ya aplicado
+--     dentro de create_order / update_order de la sección 13.
+-- =====================================================================
