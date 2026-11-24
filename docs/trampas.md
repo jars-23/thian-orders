@@ -36,3 +36,8 @@ Formato: **síntoma · causa · solución** (3 líneas). Ver [[arquitectura]] y 
 - **Síntoma:** al ejecutar SQL aparece "Sorry! A browser extension may have caused an error" (`removeChild`) y no se ve el resultado.
 - **Causa:** Chrome Translate modifica el DOM del SQL Editor (también traduce nombres de columnas en los resultados).
 - **Solución:** desactivar la traducción en supabase.com; si pasa, NO repetir el script: verificar con una consulta de solo lectura (la migración es transaccional).
+
+## T8 · Deploy de Pages: "No artifacts named github-pages"
+- **Síntoma:** el paso Deploy falla aunque Build y Upload artifact salen bien y el artefacto aparece en el run.
+- **Causa:** fallo intermitente de GitHub al leer el artefacto (el workflow no cambió; githubstatus en verde).
+- **Solución:** "Re-run failed jobs" en ese run; no hace falta un commit vacío. Si se repite mucho, valorar actualizar las acciones (aviso Node 20 → 24).

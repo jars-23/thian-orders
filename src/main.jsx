@@ -30,6 +30,9 @@ import {
   Receipt,
   Printer,
   Truck,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from "lucide-react";
 import "./style.css";
 import { ThemeProvider, CssBaseline } from "@mui/material";
@@ -492,6 +495,7 @@ function App() {
   }
   const [uploadingId, setUploadingId] = useState(null);
   const [editingProduct, setEditingProduct] = useState(null);
+  const [productSort, setProductSort] = useState({ key: null, dir: "asc" });
   async function uploadProductPhoto(product, file) {
     if (!file || uploadingId) return;
     setUploadingId(product.id);
@@ -806,7 +810,12 @@ function App() {
                     placeholder="Nombre del producto"
                     required
                   />
-                  <input name="sku" placeholder="Referencia / SKU (opcional)" />
+                  <input
+                    name="sku"
+                    key={nextSku(products)}
+                    defaultValue={nextSku(products)}
+                    placeholder="Referencia / SKU (opcional)"
+                  />
                   <CategorySelect products={products} />
                   <input
                     name="price"
@@ -840,17 +849,28 @@ function App() {
               <table>
                 <thead>
                   <tr>
-                    <th>Producto</th>
-                    <th>Categoría</th>
-                    <th>Referencia</th>
-                    <th className="num">Precio</th>
-                    <th className="num">Mayorista</th>
-                    <th>Estado</th>
+                    {[
+                      ["name", "Producto"],
+                      ["category", "Categoría"],
+                      ["sku", "Referencia"],
+                      ["price", "Precio", "num"],
+                      ["price_wholesale", "Mayorista", "num"],
+                      ["active", "Estado"],
+                    ].map(([key, label, cls]) => (
+                      <SortTh
+                        key={key}
+                        sortKey={key}
+                        label={label}
+                        className={cls}
+                        sort={productSort}
+                        onSort={setProductSort}
+                      />
+                    ))}
                     {admin && <th>Acción</th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {products.map((p) => (
+                  {sortRows(products, productSort).map((p) => (
                     <tr key={p.id}>
                       <td>
                         <div className="prodcell">
@@ -2369,6 +2389,68 @@ function CancelOrderModal({ order, onConfirm, onClose }) {
         </label>
       </div>
     </Modal>
+  );
+}
+// Siguiente SKU libre: toma el prefijo más usado (p. ej. NAV26) y el número
+// más alto + 1. Si ningún SKU tiene la forma PREFIJO-número, devuelve "".
+function nextSku(products) {
+  const byPrefix = {};
+  for (const p of products) {
+    const m = /^(.+?)-(d+)$/.exec(p.sku?.trim() || "");
+    if (!m) continue;
+    const e = (byPrefix[m[1]] ||= { count: 0, max: 0, width: 2 });
+    e.count++;
+    e.max = Math.max(e.max, Number(m[2]));
+    e.width = Math.max(e.width, m[2].length);
+  }
+  const best = Object.entries(byPrefix).sort((a, b) => b[1].count - a[1].count)[0];
+  if (!best) return "";
+  const [prefix, e] = best;
+  return `${prefix}-${String(e.max + 1).padStart(e.width, "0")}`;
+}
+// Ordena filas por una columna (texto A-Z con acentos, números de menor a
+// mayor). Los vacíos van siempre al final.
+function sortRows(rows, { key, dir }) {
+  if (!key) return rows;
+  const sign = dir === "desc" ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const x = a[key];
+    const y = b[key];
+    const ex = x == null || x === "";
+    const ey = y == null || y === "";
+    if (ex || ey) return ex === ey ? 0 : ex ? 1 : -1;
+    if (typeof x === "number" && typeof y === "number") return (x - y) * sign;
+    // Estado: A-Z = "Activo" antes que "Inactivo".
+    if (typeof x === "boolean") return (Number(y) - Number(x)) * sign;
+    return (
+      String(x).localeCompare(String(y), "es", { numeric: true, sensitivity: "base" }) * sign
+    );
+  });
+}
+// Encabezado de tabla con botón para ordenar: 1.er clic A-Z, 2.º Z-A.
+function SortTh({ sortKey, label, className, sort, onSort }) {
+  const active = sort.key === sortKey;
+  const Icon = !active ? ArrowUpDown : sort.dir === "asc" ? ArrowUp : ArrowDown;
+  return (
+    <th
+      className={className}
+      aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <button
+        type="button"
+        className={"sortbtn" + (active ? " is-active" : "")}
+        onClick={() =>
+          onSort({
+            key: sortKey,
+            dir: active && sort.dir === "asc" ? "desc" : "asc",
+          })
+        }
+        title={active && sort.dir === "asc" ? "Ordenar Z-A" : "Ordenar A-Z"}
+      >
+        {label}
+        <Icon size={13} aria-hidden="true" />
+      </button>
+    </th>
   );
 }
 // Lista desplegable de categorías: las que ya existen en el catálogo más

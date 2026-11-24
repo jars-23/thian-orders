@@ -1590,3 +1590,22 @@ button.dangerbtn.solid:hover:not(:disabled) { background: #8F1C13; color: #FFFFF
 
 /* ---------- Editar producto ---------- */
 .productedit { max-width: 720px }
+
+/* Encabezados ordenables */
+.sortbtn {
+    all: unset;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
+    border-radius: 4px;
+}
+.sortbtn svg { opacity: .45 }
+.sortbtn:hover, .sortbtn.is-active { color: var(--text) }
+.sortbtn.is-active svg { opacity: 1 }
+.sortbtn:focus-visible { outline: 2px solid var(--primary, currentColor); outline-offset: 2px }
+th.num .sortbtn { flex-direction: row-reverse }
