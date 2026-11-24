@@ -33,6 +33,8 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowUpDown,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import "./style.css";
 import { ThemeProvider, CssBaseline } from "@mui/material";
@@ -729,22 +731,11 @@ function App() {
         {notice && <div className="alert success">{notice}</div>}
         {tab === "dashboard" && admin && (
           <>
-            <div className="stats">
-              {[
-                ["Pedidos", activeOrders.length],
-                ["Pendientes", counts.pending],
-                ["En proceso", counts.in_progress],
-                ["Finalizados", counts.finished],
-              ].map(([n, v]) => (
-                <div className="stat" key={n}>
-                  <strong>{v}</strong>
-                  <span>{n}</span>
-                </div>
-              ))}
-            </div>
-            <h2>Pedidos recientes</h2>
+            <AdminDashboard orders={orders} zones={zones} counts={counts} />
+            <h2 className="dash-title">Todos los pedidos</h2>
             <Orders
-              orders={activeOrders.slice(0, 5)}
+              orders={orders}
+              pageSize={10}
               busy={busy}
               canBill={canBill}
               userId={session?.user?.id}
@@ -2096,8 +2087,292 @@ function PaymentHistory({ order }) {
     </div>
   );
 }
-function Orders({ orders, busy, canBill, userId, canSell, onEdit, onCancelOrder, products = [], zones = [], invoices = [] }) {
-  const [filter, setFilter] = useState("all");
+// Controles de página: Anterior · Página x de y · Siguiente.
+function Pager({ page, pages, total, pageSize, onPage }) {
+  const from = (page - 1) * pageSize + 1;
+  const to = Math.min(page * pageSize, total);
+  return (
+    <nav className="pager" aria-label="Paginación de pedidos">
+      <span className="pager-info">
+        {from}–{to} de {total} pedidos
+      </span>
+      <span className="pager-ctrl">
+        <button
+          type="button"
+          className="secondary compact"
+          disabled={page <= 1}
+          onClick={() => onPage(page - 1)}
+        >
+          <ChevronLeft size={15} aria-hidden="true" /> Anterior
+        </button>
+        <span className="pager-page" aria-live="polite">
+          Página {page} de {pages}
+        </span>
+        <button
+          type="button"
+          className="secondary compact"
+          disabled={page >= pages}
+          onClick={() => onPage(page + 1)}
+        >
+          Siguiente <ChevronRight size={15} aria-hidden="true" />
+        </button>
+      </span>
+    </nav>
+  );
+}
+// ---------------------------------------------------------------------
+// Dashboard del Resumen (solo admin). Todo se calcula en el navegador con
+// los pedidos ya cargados; no hay consultas nuevas.
+// ---------------------------------------------------------------------
+// Fecha local AAAA-MM-DD (en-CA da ese formato).
+const dayKey = (d) => new Date(d).toLocaleDateString("en-CA");
+// Lo cobrado de un pedido: completo = total; parcial = lo abonado; pendiente = 0.
+const orderPaid = (o) => {
+  const total = orderGrandTotal(o);
+  if (o.payment_status === "paid") return total;
+  if (o.payment_status === "partial") return Math.min(o.amount_paid || 0, total);
+  return 0;
+};
+const PERIODS = [
+  ["month", "Este mes"],
+  ["30d", "Últimos 30 días"],
+  ["all", "Todo"],
+];
+function AdminDashboard({ orders, zones = [], counts }) {
+  const [period, setPeriod] = useState("month");
+  const now = new Date();
+  const start =
+    period === "month"
+      ? new Date(now.getFullYear(), now.getMonth(), 1)
+      : period === "30d"
+        ? new Date(now.getTime() - 30 * 86400000)
+        : null;
+  const inPeriod = orders.filter((o) => !start || new Date(o.created_at) >= start);
+  const active = inPeriod.filter((o) => !o.cancelled_at);
+  const cancelled = inPeriod.length - active.length;
+  const sales = active.reduce((s, o) => s + orderGrandTotal(o), 0);
+  const collected = active.reduce((s, o) => s + orderPaid(o), 0);
+  const avg = active.length ? Math.round(sales / active.length) : 0;
+
+  // Ventas de los últimos 14 días (pedidos no cancelados, sin importar el periodo).
+  const days = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    days.push({ key: dayKey(d), date: d, total: 0, count: 0 });
+  }
+  const byDay = new Map(days.map((d) => [d.key, d]));
+  orders.forEach((o) => {
+    if (o.cancelled_at) return;
+    const d = byDay.get(dayKey(o.created_at));
+    if (d) {
+      d.total += orderGrandTotal(o);
+      d.count++;
+    }
+  });
+  const maxDay = Math.max(1, ...days.map((d) => d.total));
+
+  // Top productos, vendedores y municipios (periodo elegido).
+  const prod = new Map();
+  const sellers = new Map();
+  const zonesAgg = new Map();
+  const zoneName = new Map(zones.map((z) => [z.code, z.name]));
+  active.forEach((o) => {
+    (o.order_items || []).forEach((i) => {
+      const name = i.products?.name || "Producto";
+      const e = prod.get(name) || { name, units: 0 };
+      e.units += i.quantity;
+      prod.set(name, e);
+    });
+    const sName = o.seller_name || "Sin vendedor";
+    const se = sellers.get(sName) || { name: sName, amount: 0, count: 0 };
+    se.amount += orderGrandTotal(o);
+    se.count++;
+    sellers.set(sName, se);
+    const zName = o.delivery_zone ? zoneName.get(o.delivery_zone) || o.delivery_zone : "Sin municipio";
+    const ze = zonesAgg.get(zName) || { name: zName, count: 0, fees: 0 };
+    ze.count++;
+    ze.fees += o.delivery_fee || 0;
+    zonesAgg.set(zName, ze);
+  });
+  const topProducts = [...prod.values()].sort((a, b) => b.units - a.units).slice(0, 5);
+  const maxUnits = Math.max(1, ...topProducts.map((p) => p.units));
+  const sellerList = [...sellers.values()].sort((a, b) => b.amount - a.amount);
+  const maxSeller = Math.max(1, ...sellerList.map((x) => x.amount));
+  const zoneList = [...zonesAgg.values()].sort((a, b) => b.count - a.count);
+
+  // Producción actual (todos los pedidos activos).
+  const prodTotal = counts.pending + counts.in_progress + counts.finished;
+  const pct = (n) => (prodTotal ? (n / prodTotal) * 100 : 0);
+
+  // Entregas de hoy a 7 días.
+  const today = dayKey(now);
+  const limit = dayKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7));
+  const upcoming = orders
+    .filter((o) => !o.cancelled_at && o.delivery_date && o.delivery_date >= today && o.delivery_date <= limit)
+    .sort((a, b) =>
+      (a.delivery_date + (a.delivery_time || "")).localeCompare(b.delivery_date + (b.delivery_time || "")),
+    )
+    .slice(0, 8);
+
+  const kpis = [
+    ["Ventas", fmtMoney(sales), "brand"],
+    ["Cobrado", fmtMoney(collected), "success"],
+    ["Por cobrar", fmtMoney(Math.max(sales - collected, 0)), "warning"],
+    ["Ticket promedio", fmtMoney(avg), "info"],
+    ["Pedidos", active.length, "brand"],
+    ["Cancelados", cancelled, "danger"],
+  ];
+
+  return (
+    <section className="dash" aria-label="Dashboard">
+      <div className="dash-head">
+        <h2>Indicadores</h2>
+        <div className="seg" role="group" aria-label="Periodo">
+          {PERIODS.map(([v, l]) => (
+            <button
+              key={v}
+              type="button"
+              className={period === v ? "is-active" : ""}
+              aria-pressed={period === v}
+              onClick={() => setPeriod(v)}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="kpis">
+        {kpis.map(([label, value, tone]) => (
+          <div className={"kpi tone-" + tone} key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </div>
+        ))}
+      </div>
+
+      <div className="dash-grid">
+        <div className="panel dash-card span2">
+          <h3>Ventas por día · últimos 14 días</h3>
+          <div className="daybars" role="img" aria-label="Ventas por día de los últimos 14 días">
+            {days.map((d) => (
+              <div
+                className="daybar"
+                key={d.key}
+                title={d.date.toLocaleDateString("es-CO") + ": " + fmtMoney(d.total) + " · " + d.count + " pedido(s)"}
+              >
+                <div className="daybar-track">
+                  <div className="daybar-fill" style={{ height: (d.total / maxDay) * 100 + "%" }} />
+                </div>
+                <small>{d.date.getDate()}</small>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="panel dash-card">
+          <h3>Producción actual</h3>
+          <div
+            className="stackbar"
+            role="img"
+            aria-label={"Pendiente " + counts.pending + ", en proceso " + counts.in_progress + ", finalizado " + counts.finished}
+          >
+            <span className="st-pending" style={{ width: pct(counts.pending) + "%" }} />
+            <span className="st-progress" style={{ width: pct(counts.in_progress) + "%" }} />
+            <span className="st-finished" style={{ width: pct(counts.finished) + "%" }} />
+          </div>
+          <ul className="legend">
+            <li><i className="st-pending" /> Pendiente <b>{counts.pending}</b></li>
+            <li><i className="st-progress" /> En proceso <b>{counts.in_progress}</b></li>
+            <li><i className="st-finished" /> Finalizado <b>{counts.finished}</b></li>
+          </ul>
+          <p className="fieldhelp">Productos de todos los pedidos activos.</p>
+        </div>
+
+        <div className="panel dash-card">
+          <h3>Top 5 productos</h3>
+          {!topProducts.length && <p className="fieldhelp">Sin ventas en el periodo.</p>}
+          <ul className="hbars">
+            {topProducts.map((p) => (
+              <li key={p.name}>
+                <div className="hb-label">
+                  <span>{p.name}</span>
+                  <b>{p.units} u.</b>
+                </div>
+                <div className="hb-track"><div className="hb-fill" style={{ width: (p.units / maxUnits) * 100 + "%" }} /></div>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="panel dash-card">
+          <h3>Ventas por vendedor</h3>
+          {!sellerList.length && <p className="fieldhelp">Sin ventas en el periodo.</p>}
+          <ul className="hbars">
+            {sellerList.map((x) => (
+              <li key={x.name}>
+                <div className="hb-label">
+                  <span>{x.name} · {x.count} ped.</span>
+                  <b>{fmtMoney(x.amount)}</b>
+                </div>
+                <div className="hb-track"><div className="hb-fill alt" style={{ width: (x.amount / maxSeller) * 100 + "%" }} /></div>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="panel dash-card">
+          <h3>Entregas próximas · 7 días</h3>
+          {!upcoming.length && <p className="fieldhelp">No hay entregas programadas.</p>}
+          <ul className="upcoming">
+            {upcoming.map((o) => {
+              const items = o.order_items || [];
+              const done = items.filter((i) => i.status === "finished").length;
+              return (
+                <li key={o.id}>
+                  <span className="up-date">
+                    {o.delivery_date === today ? "Hoy" : fmtDate(o.delivery_date)}
+                    {o.delivery_time && <small>{fmtTime(o.delivery_time)}</small>}
+                  </span>
+                  <span className="up-main">
+                    <b>#{o.order_number}</b> {o.customer_name}
+                  </span>
+                  <span className={"up-pill" + (items.length && done === items.length ? " ok" : "")}>
+                    {done}/{items.length} listos
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+
+        <div className="panel dash-card">
+          <h3>Pedidos por municipio</h3>
+          {!zoneList.length && <p className="fieldhelp">Sin pedidos en el periodo.</p>}
+          {!!zoneList.length && (
+            <table className="mini">
+              <thead>
+                <tr><th>Municipio</th><th className="num">Pedidos</th><th className="num">Domicilios</th></tr>
+              </thead>
+              <tbody>
+                {zoneList.map((z) => (
+                  <tr key={z.name}><td>{z.name}</td><td className="num">{z.count}</td><td className="num">{fmtMoney(z.fees)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+function Orders({ orders, busy, canBill, userId, canSell, onEdit, onCancelOrder, products = [], zones = [], invoices = [], pageSize = 0 }) {
+  const [filter, setFilterState] = useState("all");
+  const [page, setPage] = useState(1);
+  // Al cambiar el filtro se vuelve a la primera página.
+  const setFilter = (v) => {
+    setFilterState(v);
+    setPage(1);
+  };
   const [cancellingId, setCancellingId] = useState(null);
   const [photo, setPhoto] = useState(null);
   const [editingId, setEditingId] = useState(null);
@@ -2123,6 +2398,22 @@ function Orders({ orders, busy, canBill, userId, canSell, onEdit, onCancelOrder,
         : !o.cancelled_at && o.order_items?.some((i) => i.status === filter),
   );
   const cancelling = orders.find((o) => o.id === cancellingId);
+  // Paginación opcional (pageSize = 0 muestra todo).
+  const pages = pageSize ? Math.max(1, Math.ceil(filtered.length / pageSize)) : 1;
+  const current = Math.min(page, pages);
+  const shown = pageSize
+    ? filtered.slice((current - 1) * pageSize, current * pageSize)
+    : filtered;
+  const pager =
+    pageSize && filtered.length > pageSize ? (
+      <Pager
+        page={current}
+        pages={pages}
+        total={filtered.length}
+        pageSize={pageSize}
+        onPage={setPage}
+      />
+    ) : null;
   return (
     <>
       <div className="filter">
@@ -2144,7 +2435,8 @@ function Orders({ orders, busy, canBill, userId, canSell, onEdit, onCancelOrder,
           {canSell && !orders.length ? "Aún no has generado pedidos." : "No hay pedidos para mostrar."}
         </div>
       )}
-      {filtered.map((o) => (
+      {pager}
+      {shown.map((o) => (
         <article className={"panel order" + (o.cancelled_at ? " cancelled" : "")} key={o.id}>
           <div className="orderhead">
             <div>
@@ -2320,6 +2612,7 @@ function Orders({ orders, busy, canBill, userId, canSell, onEdit, onCancelOrder,
           <PaymentHistory order={o} />
         </article>
       ))}
+      {pager}
       <Lightbox photo={photo} onClose={() => setPhoto(null)} />
       {cancelling && (
         <CancelOrderModal
