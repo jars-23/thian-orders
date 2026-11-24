@@ -17,12 +17,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  # Compila y sube el artefacto. Va en su propio job para que el artefacto
+  # quede cerrado antes de publicarlo (ver docs/trampas.md T8).
+  build:
     runs-on: ubuntu-latest
-
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       # Descargar código
@@ -33,7 +31,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       # Instalar dependencias
@@ -53,10 +51,20 @@ jobs:
 
       # Subir carpeta compilada
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: ./dist
 
+  # Publica el artefacto que dejó el job build.
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
       # Publicar aplicación
       - name: Deploy
         id: deployment
