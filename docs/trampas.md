@@ -51,3 +51,8 @@ Formato: **síntoma · causa · solución** (3 líneas). Ver [[arquitectura]] y 
 - **Síntoma:** `npm run dev` con `.env.local` correcto carga el login, pero siempre dice «Usuario o contraseña incorrectos».
 - **Causa:** la Edge Function `login-username` solo responde al origen de `ALLOWED_ORIGIN` (GitHub Pages) y rechaza `http://localhost:5173` (`supabase/functions/login-username/index.ts:27`).
 - **Solución:** probar los cambios de interfaz en la web tras el push. Aceptar localhost exigiría cambiar el contrato de la función (orden expresa).
+
+## T11 · Un `<aside>` dentro de la app hereda el estilo de la barra lateral
+- **Síntoma:** un panel nuevo sale con fondo marrón oscuro y texto apagado.
+- **Causa:** `src/style.css:165` da estilo a `aside` (la barra lateral) por etiqueta, no por clase.
+- **Solución:** no usar `<aside>` en contenido; usar `<div>`/`<section>` con clase propia.

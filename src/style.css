@@ -1788,7 +1788,7 @@ tr.is-inactive .plist-thumb { opacity: .55 }
 }
 
 /* Ventanas de producto: formulario + foto a la derecha */
-.pm-layout { display: grid; grid-template-columns: minmax(0, 720px) minmax(220px, 300px); gap: 24px; align-items: start }
+.pm-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 300px); gap: 24px; align-items: start }
 .pm-layout .productedit { max-width: none }
 .pm-photo { display: flex; flex-direction: column; gap: 10px }
 .pm-photo-label { font-size: .9rem; font-weight: 600; color: var(--text-muted) }

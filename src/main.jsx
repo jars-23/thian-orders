@@ -3082,7 +3082,7 @@ function PhotoPicker({ current, file, onFile, disabled }) {
   }, [file]);
   const src = preview || current;
   return (
-    <aside className="pm-photo">
+    <div className="pm-photo">
       <span className="pm-photo-label">Foto del producto</span>
       <div className="pm-photo-box">
         {src ? <img src={src} alt="Vista previa de la foto" /> : <Package size={40} aria-hidden="true" />}
@@ -3111,7 +3111,7 @@ function PhotoPicker({ current, file, onFile, disabled }) {
       ) : (
         <small className="pm-photo-help">JPG, PNG o WebP. Se ajusta el tamaño automáticamente.</small>
       )}
-    </aside>
+    </div>
   );
 }
 // Ventana "Nuevo producto" (solo Administrador).
