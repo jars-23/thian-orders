@@ -38,6 +38,9 @@ import {
   List,
   Search,
   Power,
+  Calculator,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import "./style.css";
 import { ThemeProvider, CssBaseline } from "@mui/material";
@@ -85,6 +88,15 @@ const PAYMENT_STATUS = {
 };
 const PAYMENT_METHOD = { transfer: "Transferencia", cash: "Efectivo" };
 // Consecutivo de factura: FAC-0001
+// Costo vigente de un producto en una fecha (historial product_costs,
+// ordenado de más reciente a más antiguo). null = sin costo registrado.
+const costAt = (costs, productId, date = new Date()) => {
+  const t = new Date(date).getTime();
+  const row = costs.find(
+    (c) => c.product_id === productId && new Date(c.valid_from).getTime() <= t,
+  );
+  return row ? row.cost : null;
+};
 const fmtInvoice = (n) => (n == null ? "Borrador" : `FAC-${String(n).padStart(4, "0")}`);
 const itemsTotal = (o) =>
   (o.order_items || []).reduce((s, i) => s + (i.unit_price || 0) * i.quantity, 0);
@@ -121,6 +133,7 @@ function App() {
     [tab, setTab] = useState("dashboard"),
     [products, setProducts] = useState([]),
     [suppliers, setSuppliers] = useState([]),
+    [costs, setCosts] = useState([]),
     [orders, setOrders] = useState([]),
     [sellers, setSellers] = useState([]),
     [zones, setZones] = useState([]),
@@ -215,7 +228,7 @@ function App() {
   async function reload() {
     if (!profile?.active) return;
     setBusy(true);
-    const [p, o, sn, s, r, ur, z, inv, sup] = await Promise.all([
+    const [p, o, sn, s, r, ur, z, inv, sup, pc] = await Promise.all([
       supabase
         .from("products")
         .select("*")
@@ -246,6 +259,12 @@ function App() {
       admin
         ? supabase.from("suppliers").select("*").order("name")
         : Promise.resolve({ data: [], error: null }),
+      admin
+        ? supabase
+            .from("product_costs")
+            .select("product_id,cost,valid_from")
+            .order("valid_from", { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
     ]);
     const err = p.error || o.error || s.error || r.error || ur.error;
     if (err) message(err);
@@ -254,6 +273,8 @@ function App() {
       // Si la migración de proveedores no está aplicada, el catálogo sigue igual.
       if (sup.error) console.warn("suppliers:", sup.error.message);
       setSuppliers(sup.data || []);
+      if (pc.error) console.warn("product_costs:", pc.error.message);
+      setCosts(pc.data || []);
       // Si la RPC falla (p. ej. migración sin aplicar) los pedidos se
       // muestran igual, con "—" como vendedor.
       if (sn.error) console.warn("order_seller_names:", sn.error.message);
@@ -431,6 +452,8 @@ function App() {
       })
       .select("id,name")
       .single();
+    const costIn = f.get("cost");
+    if (!error) await saveCost(created.id, costIn == null || costIn === "" ? null : Number(costIn));
     message(error, "Producto registrado");
     if (!error) {
       form.reset();
@@ -494,7 +517,17 @@ function App() {
     if (!error) await reload();
     return !error;
   }
-  async function updateProduct(id, { supplier_new, ...patch }) {
+  // Registra un costo nuevo (fila de historial) si cambió. true = ok.
+  async function saveCost(productId, cost) {
+    if (cost == null || cost === costAt(costs, productId)) return true;
+    const { error } = await supabase
+      .from("product_costs")
+      .insert({ product_id: productId, cost });
+    if (error) message(error);
+    return !error;
+  }
+  async function updateProduct(id, { supplier_new, cost, ...patch }) {
+    if (!(await saveCost(id, cost))) return false;
     if ("supplier_id" in patch) {
       const supplierId = await resolveSupplier(patch.supplier_id, supplier_new);
       if (supplierId === undefined) return false;
@@ -697,6 +730,7 @@ function App() {
             ["orders", ShoppingBag, "Pedidos"],
             ...(canBill ? [["billing", Receipt, "Facturación"]] : []),
             ["products", Package, "Productos"],
+            ...(admin ? [["settlement", Calculator, "Liquidación"]] : []),
             ...(admin ? [["sellers", Users, "Usuarios y roles"]] : []),
           ].map(([id, Icon, title]) => {
             // Registrar pedido vive dentro de Pedidos
@@ -743,6 +777,7 @@ function App() {
                   products: "Productos",
                   sellers: "Vendedores",
                   billing: "Facturación",
+                  settlement: "Liquidación de proveedores",
                 }[tab]
               }
             </h1>
@@ -824,6 +859,15 @@ function App() {
             invoices={invoices}
           />
         )}
+        {tab === "settlement" && admin && (
+          <SupplierSettlement
+            orders={orders}
+            invoices={invoices}
+            products={products}
+            suppliers={suppliers}
+            costs={costs}
+          />
+        )}
         {tab === "billing" && canBill && (
           <Billing
             orders={activeOrders}
@@ -848,6 +892,7 @@ function App() {
             product={editingProduct}
             products={products}
             suppliers={suppliers}
+            cost={costAt(costs, editingProduct.id)}
             onSave={updateProduct}
             onUpload={uploadProductPhoto}
             onClose={() => setEditingProduct(null)}
@@ -857,6 +902,7 @@ function App() {
           <ProductsView
             products={products}
             suppliers={suppliers}
+            costs={costs}
             admin={admin}
             busy={busy}
             uploadingId={uploadingId}
@@ -2783,6 +2829,216 @@ function CategorySelect({ products, defaultValue = "" }) {
     </>
   );
 }
+// ---------------------------------------------------------------------
+// Liquidación de proveedores (solo admin). Solo cuentan los pedidos con
+// factura activa (no anulada) y no cancelados, por fecha de factura. Cada
+// línea va al proveedor de su producto; el costo es el vigente en la fecha
+// de la factura (product_costs). El domicilio no entra. Todo se calcula en
+// el navegador con los datos ya cargados.
+// ---------------------------------------------------------------------
+function SupplierSettlement({ orders, invoices, products, suppliers, costs }) {
+  const today = new Date().toLocaleDateString("en-CA");
+  const [from, setFrom] = useState(today.slice(0, 8) + "01");
+  const [to, setTo] = useState(today);
+  const [openId, setOpenId] = useState(null);
+  const orderById = new Map(orders.map((o) => [o.id, o]));
+  const productById = new Map(products.map((p) => [p.id, p]));
+  const supplierById = new Map(suppliers.map((x) => [x.id, x]));
+  const groups = new Map();
+  let invoiceCount = 0;
+  for (const inv of invoices) {
+    if (inv.voided_at) continue;
+    const day = new Date(inv.created_at).toLocaleDateString("en-CA");
+    if ((from && day < from) || (to && day > to)) continue;
+    const o = orderById.get(inv.order_id);
+    if (!o || o.cancelled_at) continue;
+    invoiceCount++;
+    for (const it of o.order_items || []) {
+      const p = productById.get(it.product_id);
+      const sup = p ? supplierById.get(p.supplier_id) : null;
+      const key = sup?.id || "none";
+      if (!groups.has(key))
+        groups.set(key, {
+          id: key,
+          name: sup?.name || "Sin proveedor",
+          own: !!sup?.own,
+          units: 0,
+          sale: 0,
+          cost: 0,
+          missing: 0,
+          items: new Map(),
+        });
+      const g = groups.get(key);
+      const qty = it.quantity || 0;
+      const sale = (it.unit_price || 0) * qty;
+      const unitCost = costAt(costs, it.product_id, inv.created_at);
+      g.units += qty;
+      g.sale += sale;
+      if (unitCost == null) g.missing += qty;
+      else g.cost += unitCost * qty;
+      const pk = it.product_id;
+      if (!g.items.has(pk))
+        g.items.set(pk, {
+          id: pk,
+          name: p?.name || it.products?.name || "Producto",
+          units: 0,
+          sale: 0,
+          cost: 0,
+          missing: 0,
+          unitCosts: new Set(),
+        });
+      const r = g.items.get(pk);
+      r.units += qty;
+      r.sale += sale;
+      if (unitCost == null) r.missing += qty;
+      else {
+        r.cost += unitCost * qty;
+        r.unitCosts.add(unitCost);
+      }
+    }
+  }
+  const list = [...groups.values()].sort(
+    (a, b) => Number(a.own) - Number(b.own) || b.sale - a.sale,
+  );
+  const totalSale = list.reduce((n, g) => n + g.sale, 0);
+  const toPay = list.filter((g) => !g.own).reduce((n, g) => n + g.cost, 0);
+  const totalCost = list.reduce((n, g) => n + g.cost, 0);
+  const profit = totalSale - totalCost;
+  const missing = list.reduce((n, g) => n + g.missing, 0);
+  const pct = (part, whole) => (whole ? Math.round((part / whole) * 100) : 0);
+  return (
+    <section className="settle">
+      <div className="panel settle-filters">
+        <label>
+          Desde (fecha de factura)
+          <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
+        </label>
+        <label>
+          Hasta
+          <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
+        </label>
+        <p className="fieldhelp">
+          Solo pedidos facturados (factura activa). El domicilio no se incluye. El costo es el vigente
+          en la fecha de cada factura.
+        </p>
+      </div>
+      <div className="kpis settle-kpis">
+        <div className="kpi tone-brand">
+          <span>Vendido</span>
+          <strong>{fmtMoney(totalSale)}</strong>
+          <small className="kpi-note">{invoiceCount} {invoiceCount === 1 ? "factura" : "facturas"}</small>
+        </div>
+        <div className="kpi tone-warning">
+          <span>A pagar a proveedores</span>
+          <strong>{fmtMoney(toPay)}</strong>
+          <small className="kpi-note">Sin producción propia</small>
+        </div>
+        <div className="kpi tone-success">
+          <span>Ganancia</span>
+          <strong>{fmtMoney(profit)}</strong>
+          <small className="kpi-note">{pct(profit, totalSale)} % de lo vendido</small>
+        </div>
+      </div>
+      {missing > 0 && (
+        <div className="settle-warn" role="status">
+          <b>{missing} {missing === 1 ? "unidad sin costo" : "unidades sin costo"}</b> registrado: no
+          suman al pago ni restan a la ganancia. Registra el costo en Productos.
+        </div>
+      )}
+      {!list.length && (
+        <div className="panel empty">No hay ventas facturadas en este rango de fechas.</div>
+      )}
+      <div className="settle-cards">
+        {list.map((g) => {
+          const open = openId === g.id;
+          const gain = g.sale - g.cost;
+          return (
+            <article key={g.id} className={"panel settle-card" + (g.own ? " own" : "")}>
+              <header>
+                <h3>
+                  {g.name}
+                  {g.own && <span className="pill">Producción propia</span>}
+                </h3>
+                <button
+                  type="button"
+                  className="secondary compact"
+                  aria-expanded={open}
+                  onClick={() => setOpenId(open ? null : g.id)}
+                >
+                  {open ? <ChevronUp size={15} aria-hidden="true" /> : <ChevronDown size={15} aria-hidden="true" />}
+                  {open ? "Ocultar detalle" : "Ver detalle"}
+                </button>
+              </header>
+              <dl className="settle-nums">
+                <div>
+                  <dt>Unidades</dt>
+                  <dd>{g.units}</dd>
+                </div>
+                <div>
+                  <dt>Vendido</dt>
+                  <dd>{fmtMoney(g.sale)}</dd>
+                </div>
+                <div>
+                  <dt>{g.own ? "Costo de producción" : "A pagar"}</dt>
+                  <dd className={g.own ? "" : "topay"}>{fmtMoney(g.cost)}</dd>
+                </div>
+                <div>
+                  <dt>Ganancia</dt>
+                  <dd className="gain">
+                    {fmtMoney(gain)} <small>({pct(gain, g.sale)} %)</small>
+                  </dd>
+                </div>
+              </dl>
+              {g.missing > 0 && (
+                <p className="settle-missing">
+                  {g.missing} {g.missing === 1 ? "unidad" : "unidades"} sin costo registrado.
+                </p>
+              )}
+              {open && (
+                <div className="tablewrap">
+                  <table className="mini">
+                    <thead>
+                      <tr>
+                        <th>Producto</th>
+                        <th className="num">Unid.</th>
+                        <th className="num">Venta</th>
+                        <th className="num">Costo unit.</th>
+                        <th className="num">Costo total</th>
+                        <th className="num">Ganancia</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...g.items.values()]
+                        .sort((a, b) => b.sale - a.sale)
+                        .map((r) => (
+                          <tr key={r.id}>
+                            <td>{r.name}</td>
+                            <td className="num">{r.units}</td>
+                            <td className="num">{fmtMoney(r.sale)}</td>
+                            <td className="num">
+                              {r.missing ? (
+                                <span className="pill cancelled-pill">Sin costo</span>
+                              ) : r.unitCosts.size === 1 ? (
+                                fmtMoney([...r.unitCosts][0])
+                              ) : (
+                                "Varios"
+                              )}
+                            </td>
+                            <td className="num">{fmtMoney(r.cost)}</td>
+                            <td className="num">{fmtMoney(r.sale - r.cost)}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
 // Color fijo por categoría (mismo nombre = mismo color).
 const catTone = (name) => {
   let h = 0;
@@ -2794,6 +3050,7 @@ const catTone = (name) => {
 function ProductsView({
   products,
   suppliers = [],
+  costs = [],
   admin,
   busy,
   uploadingId,
@@ -2825,6 +3082,7 @@ function ProductsView({
       .map((p) => ({
         ...p,
         supplier_name: suppliers.find((x) => x.id === p.supplier_id)?.name || null,
+        cost: admin ? costAt(costs, p.id) : null,
       })),
     sort,
   );
@@ -2841,6 +3099,7 @@ function ProductsView({
     ...(admin ? [["supplier_name", "Proveedor"]] : []),
     ["price", "Precio", "num"],
     ["price_wholesale", "Mayorista", "num"],
+    ...(admin ? [["cost", "Costo", "num"]] : []),
     ["active", "Estado"],
   ];
   function toggle(p) {
@@ -2937,6 +3196,9 @@ function ProductsView({
                 <td className="num plist-money">
                   {p.price_wholesale == null ? "—" : fmtMoney(p.price_wholesale)}
                 </td>
+                {admin && (
+                  <td className="num plist-cost">{p.cost == null ? "—" : fmtMoney(p.cost)}</td>
+                )}
                 <td>
                   <span className={"state-tag " + (p.active ? "on" : "off")}>
                     {p.active ? "Activo" : "Inactivo"}
@@ -3174,6 +3436,10 @@ function ProductCreateModal({ products, suppliers, busy, onCreate, onUpload, onC
           Precio mayorista (COP)
           <input name="price_wholesale" type="number" min="0" step="1" inputMode="numeric" />
         </label>
+        <label>
+          Costo (COP) · solo admin
+          <input name="cost" type="number" min="0" step="1" inputMode="numeric" />
+        </label>
         <label className="span2">
           Descripción
           <input name="description" />
@@ -3235,7 +3501,7 @@ function SupplierSelect({ suppliers = [], defaultValue = "" }) {
 }
 // Ventana para editar un producto (solo Administrador). Los pedidos ya
 // creados no cambian: guardan su propio precio.
-function ProductEditModal({ product, products = [], suppliers = [], onSave, onUpload, onClose }) {
+function ProductEditModal({ product, products = [], suppliers = [], cost = null, onSave, onUpload, onClose }) {
   const [file, setFile] = useState(null);
   const [saving, setSaving] = useState(false);
   const formId = `product-${product.id}`;
@@ -3253,6 +3519,7 @@ function ProductEditModal({ product, products = [], suppliers = [], onSave, onUp
       supplier_new: String(f.get("supplier_new") || "").trim(),
       price: num(f.get("price")),
       price_wholesale: num(f.get("price_wholesale")),
+      cost: num(f.get("cost")),
       description: String(f.get("description") || "").trim() || null,
     });
     // La foto nueva se sube solo al guardar (Cancelar no cambia nada).
@@ -3304,6 +3571,10 @@ function ProductEditModal({ product, products = [], suppliers = [], onSave, onUp
         <label>
           Precio mayorista (COP)
           <input name="price_wholesale" type="number" min="0" step="1" inputMode="numeric" defaultValue={product.price_wholesale ?? ""} />
+        </label>
+        <label>
+          Costo (COP) · solo admin
+          <input name="cost" type="number" min="0" step="1" inputMode="numeric" defaultValue={cost ?? ""} />
         </label>
         <label className="span2">
           Descripción

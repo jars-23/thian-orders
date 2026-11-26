@@ -24,7 +24,8 @@ flowchart LR
 | `profiles` | Usuario: nombre, username, activo |
 | `roles`, `user_roles` | Roles acumulativos por usuario |
 | `products` | Catálogo: precio general, mayorista, categoría, proveedor (`supplier_id`), foto |
-| `suppliers` | Proveedores de los productos (lee: usuario activo; crea/modifica: admin) |
+| `suppliers` | Proveedores de los productos; `own` = producción propia (lee: usuario activo; crea/modifica: admin) |
+| `product_costs` | Historial de costos por producto (solo admin). La liquidación usa el vigente en la fecha de la factura |
 | `orders` | Pedido: cliente, entrega, mayorista, pago |
 | `order_items` | Productos del pedido con estado de producción y precio congelado |
 | `order_payments` | Historial de abonos y correcciones |
