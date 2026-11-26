@@ -742,6 +742,7 @@ function App() {
               pageSize={10}
               busy={busy}
               canBill={canBill}
+              admin={admin}
               userId={session?.user?.id}
               canSell={canSell}
               onEdit={updateOrder}
@@ -760,6 +761,7 @@ function App() {
             orders={visibleOrders}
             busy={busy}
             canBill={canBill}
+            admin={admin}
             userId={session?.user?.id}
             canSell={canSell}
             onEdit={updateOrder}
@@ -1668,7 +1670,7 @@ function Lightbox({ photo, onClose }) {
   );
 }
 // Editar datos del pedido. El pago solo lo ven Administrador y Facturación.
-function OrderEditForm({ order, products = [], zones = [], invoiced = false, canBill, onSave, onCancel }) {
+function OrderEditForm({ order, products = [], zones = [], invoiced = false, canBill, admin = false, onSave, onCancel }) {
   const byId = new Map(products.map((p) => [p.id, p]));
   const [zone, setZone] = useState(order.delivery_zone || "");
   const zoneRow = zones.find((z) => z.code === zone);
@@ -1726,15 +1728,26 @@ function OrderEditForm({ order, products = [], zones = [], invoiced = false, can
       const o = original.find((y) => y.id && y.id === x.id);
       return !o || Number(o.quantity) !== Number(x.quantity) || o.notes.trim() !== x.notes.trim();
     });
-  // Mismo criterio que update_order: al cambiar productos, cada línea pendiente
+  // "Recalcular precios" (solo Administrador): fuerza a enviar los productos
+  // para que update_order recalcule las líneas pendientes con el precio actual
+  // del catálogo. No guarda nada hasta pulsar "Guardar cambios".
+  const [repricing, setRepricing] = useState(false);
+  const itemsDirty = itemsChanged || repricing;
+  // Mismo criterio que update_order: al enviar productos, cada línea pendiente
   // toma el precio de su referencia (12+ unidades del producto = mayorista).
   // Las líneas en producción o finalizadas conservan su precio guardado.
   const priceOf = (x) => {
     const p = byId.get(x.product_id);
     const pending = !x.id || x.status === "pending";
-    if (!itemsChanged || !pending || !p) return x.unit_price ?? (p ? p.price : 0);
+    if (!itemsDirty || !pending || !p) return x.unit_price ?? (p ? p.price : 0);
     return tierPrice(p, countOf(x.product_id));
   };
+  // Líneas pendientes guardadas cuyo precio ya no coincide con el catálogo.
+  const staleItems = items.filter((x) => {
+    const p = byId.get(x.product_id);
+    return x.id && x.status === "pending" && p && x.unit_price !== tierPrice(p, countOf(x.product_id));
+  });
+  const canReprice = admin && !invoiced && !order.cancelled_at;
   const wholesaleOf = (x) => {
     const p = byId.get(x.product_id);
     return !!p && p.price_wholesale != null && priceOf(x) === p.price_wholesale && countOf(x.product_id) >= WHOLESALE_MIN_UNITS;
@@ -1763,7 +1776,19 @@ function OrderEditForm({ order, products = [], zones = [], invoiced = false, can
     (method &&
       (status === "paid" || (Number.isInteger(value) && value > 0 && !payErr)));
   const paidNow = order.amount_paid || 0;
-  const overpaid = !canBill && (itemsChanged || zoneChanged) && paidNow > total;
+  const overpaid = !canBill && (itemsDirty || zoneChanged) && paidNow > total;
+  // Al recalcular, si el pedido estaba pagado completo y el total sube, el pago
+  // pasa a parcial con lo ya abonado (no se inventa un pago nuevo).
+  useEffect(() => {
+    if (!repricing || order.payment_status !== "paid") return;
+    if (total > paidNow) {
+      setStatus("partial");
+      setAmount(String(paidNow));
+    } else {
+      setStatus("paid");
+      setAmount("");
+    }
+  }, [repricing, total]);
   const formOk = payOk && itemsValid && !overpaid;
   async function submit(e) {
     e.preventDefault();
@@ -1775,7 +1800,7 @@ function OrderEditForm({ order, products = [], zones = [], invoiced = false, can
       customer_phone: String(f.get("customer_phone") || ""),
       delivery_address: String(f.get("delivery_address") || ""),
       ...(zoneChanged && { delivery_zone: zone }),
-      ...(itemsChanged && {
+      ...(itemsDirty && {
         items: items.map((x) => ({
           id: x.id || null,
           product_id: x.product_id,
@@ -1962,6 +1987,49 @@ function OrderEditForm({ order, products = [], zones = [], invoiced = false, can
               title="Catálogo"
             />
           </Modal>
+        )}
+        {canReprice && (
+          <div className={"reprice" + (repricing ? " on" : "")}>
+            <span>
+              {repricing ? (
+                <>
+                  <b>Precios recalculados</b>
+                  <small>
+                    Los productos pendientes usan el precio actual del catálogo. Se guarda al pulsar
+                    «Guardar cambios».
+                  </small>
+                </>
+              ) : staleItems.length ? (
+                <>
+                  <b>
+                    {staleItems.length === 1
+                      ? "1 producto pendiente tiene un precio distinto al del catálogo"
+                      : staleItems.length + " productos pendientes tienen un precio distinto al del catálogo"}
+                  </b>
+                  <small>Los productos en producción o finalizados conservan su precio.</small>
+                </>
+              ) : (
+                <>
+                  <b>Precios al día</b>
+                  <small>Los productos pendientes ya tienen el precio del catálogo.</small>
+                </>
+              )}
+            </span>
+            {repricing ? (
+              <button type="button" className="secondary compact" onClick={() => setRepricing(false)}>
+                <X size={15} aria-hidden="true" /> Deshacer
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="secondary compact"
+                disabled={!staleItems.length}
+                onClick={() => setRepricing(true)}
+              >
+                <RefreshCw size={15} aria-hidden="true" /> Recalcular precios
+              </button>
+            )}
+          </div>
         )}
         <div className="edititem-total">
           <span>
@@ -2364,7 +2432,7 @@ function AdminDashboard({ orders, zones = [], counts }) {
     </section>
   );
 }
-function Orders({ orders, busy, canBill, userId, canSell, onEdit, onCancelOrder, products = [], zones = [], invoices = [], pageSize = 0 }) {
+function Orders({ orders, busy, canBill, admin = false, userId, canSell, onEdit, onCancelOrder, products = [], zones = [], invoices = [], pageSize = 0 }) {
   const [filter, setFilterState] = useState("all");
   const [page, setPage] = useState(1);
   // Al cambiar el filtro se vuelve a la primera página.
@@ -2509,6 +2577,7 @@ function Orders({ orders, busy, canBill, userId, canSell, onEdit, onCancelOrder,
               zones={zones}
               invoiced={invoiceOf.has(o.id)}
               canBill={canBill}
+              admin={admin}
               onSave={onEdit}
               onCancel={() => setEditingId(null)}
             />

@@ -1683,3 +1683,10 @@ table.mini th, table.mini td { padding: 8px 6px }
 .wholesale-note small { display: block; margin-top: 2px; font-size: .76rem; color: var(--text-muted) }
 .wholesale-note.on { border-color: var(--primary); background: var(--primary-soft) }
 .tag-wholesale { font-weight: 700; color: var(--primary) }
+
+/* Recalcular precios (Editar pedido, admin) */
+.reprice { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 12px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-muted) }
+.reprice span { min-width: 0; flex: 1 1 260px }
+.reprice b { display: block; font-size: .9rem }
+.reprice small { display: block; margin-top: 2px; font-size: .78rem; color: var(--text-muted) }
+.reprice.on { border-color: var(--info); background: var(--info-bg) }
