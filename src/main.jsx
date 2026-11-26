@@ -3440,9 +3440,10 @@ function Billing({ orders, invoices: allInvoices, zones, busy, admin = false, on
     );
   const match = (num, name) => !q || String(num).includes(q) || name?.toLowerCase().includes(q);
   const pendingList = pending.filter((o) => match(o.order_number, o.customer_name));
-  const doneList = [...invoices, ...voided].filter(
-    (x) => match(x.order_number, x.customer_name) || fmtInvoice(x.invoice_number).toLowerCase().includes(q),
-  );
+  const matchInv = (x) =>
+    match(x.order_number, x.customer_name) || fmtInvoice(x.invoice_number).toLowerCase().includes(q);
+  // Facturadas = activas; Anuladas = historial aparte.
+  const doneList = (view === "voided" ? voided : invoices).filter(matchInv);
   const readyCount = pending.filter(ready).length;
   const balance = invoices.reduce((s, x) => s + (x.balance || 0), 0);
   const preview = orders.find((o) => o.id === previewId);
@@ -3484,7 +3485,7 @@ function Billing({ orders, invoices: allInvoices, zones, busy, admin = false, on
           onChange={(e) => setQuery(e.target.value)}
         />
         <div className="chips" role="group" aria-label="Vista">
-          {[["todo", `Por facturar (${pending.length})`], ["done", `Facturadas (${invoices.length})`]].map(([v, l]) => (
+          {[["todo", `Por facturar (${pending.length})`], ["done", `Facturadas (${invoices.length})`], ["voided", `Anuladas (${voided.length})`]].map(([v, l]) => (
             <button key={v} type="button" className={"chip" + (view === v ? " active" : "")} aria-pressed={view === v} onClick={() => setView(v)}>
               {l}
             </button>
@@ -3531,9 +3532,13 @@ function Billing({ orders, invoices: allInvoices, zones, busy, admin = false, on
         </div>
       )}
 
-      {view === "done" && (
+      {(view === "done" || view === "voided") && (
         <div className="billlist">
-          {!doneList.length && <div className="panel empty">Aún no hay facturas.</div>}
+          {!doneList.length && (
+            <div className="panel empty">
+              {view === "voided" ? "No hay facturas anuladas." : "Aún no hay facturas."}
+            </div>
+          )}
           {doneList.map((x) => (
             <article key={x.id} className={"billrow" + (x.voided_at ? " voided" : "")}>
               <div className="br-main">

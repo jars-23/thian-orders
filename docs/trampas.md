@@ -46,3 +46,8 @@ Formato: **síntoma · causa · solución** (3 líneas). Ver [[arquitectura]] y 
 - **Síntoma:** tras generar SQL con un script de node, las funciones quedan con `AS $` y `END; $;`.
 - **Causa:** en `str.replace(a, b)`, `$$` dentro de `b` significa "un `$`".
 - **Solución:** usar `str.replace(a, () => b)` y contar `$$` antes/después (`grep -o '\$\$' | wc -l`).
+
+## T10 · En local no se puede iniciar sesión
+- **Síntoma:** `npm run dev` con `.env.local` correcto carga el login, pero siempre dice «Usuario o contraseña incorrectos».
+- **Causa:** la Edge Function `login-username` solo responde al origen de `ALLOWED_ORIGIN` (GitHub Pages) y rechaza `http://localhost:5173` (`supabase/functions/login-username/index.ts:27`).
+- **Solución:** probar los cambios de interfaz en la web tras el push. Aceptar localhost exigiría cambiar el contrato de la función (orden expresa).
