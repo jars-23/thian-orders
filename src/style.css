@@ -1786,3 +1786,21 @@ tr.is-inactive .plist-thumb { opacity: .55 }
   .plist-foot { grid-template-columns: 1fr; justify-items: center }
   .plist-foot .pager-info, .plist-foot select { justify-self: center }
 }
+
+/* Ventanas de producto: formulario + foto a la derecha */
+.pm-layout { display: grid; grid-template-columns: minmax(0, 720px) minmax(220px, 300px); gap: 24px; align-items: start }
+.pm-layout .productedit { max-width: none }
+.pm-photo { display: flex; flex-direction: column; gap: 10px }
+.pm-photo-label { font-size: .9rem; font-weight: 600; color: var(--text-muted) }
+.pm-photo-box {
+  display: grid; place-items: center; aspect-ratio: 1 / 1; width: 100%;
+  border: 1px dashed var(--border-strong); border-radius: var(--radius); background: var(--surface);
+  color: var(--text-subtle); overflow: hidden;
+}
+.pm-photo-box img { width: 100%; height: 100%; object-fit: cover; display: block }
+.pm-photo-btn { justify-content: center; min-height: 44px }
+.pm-photo-help { color: var(--text-muted); font-size: .8rem; line-height: 1.4; overflow-wrap: anywhere }
+@media (max-width: 900px) {
+  .pm-layout { grid-template-columns: 1fr }
+  .pm-photo { max-width: 320px }
+}

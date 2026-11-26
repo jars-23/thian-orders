@@ -416,7 +416,7 @@ function App() {
       setBusy(false);
       return false;
     }
-    const { error } = await supabase
+    const { data: created, error } = await supabase
       .from("products")
       .insert({
         supplier_id: supplierId,
@@ -428,14 +428,16 @@ function App() {
           f.get("price_wholesale") === "" ? null : Number(f.get("price_wholesale")),
         description: f.get("description") || null,
         image_url: f.get("image_url") || null,
-      });
+      })
+      .select("id,name")
+      .single();
     message(error, "Producto registrado");
     if (!error) {
       form.reset();
       await reload();
     }
     setBusy(false);
-    return !error;
+    return error ? false : created;
   }
   async function createOrder(e, lines, wholesale, payment) {
     e.preventDefault();
@@ -569,10 +571,13 @@ function App() {
       if (error) throw error;
       message(null, `Foto de "${product.name}" actualizada`);
       await reload();
+      setUploadingId(null);
+      return true;
     } catch (err) {
       message({ message: err?.message || "No se pudo subir la foto." });
     }
     setUploadingId(null);
+    return false;
   }
   async function changeProduct(id, active) {
     setBusy(true);
@@ -844,6 +849,7 @@ function App() {
             products={products}
             suppliers={suppliers}
             onSave={updateProduct}
+            onUpload={uploadProductPhoto}
             onClose={() => setEditingProduct(null)}
           />
         )}
@@ -3057,19 +3063,72 @@ function ProductsView({
           suppliers={suppliers}
           busy={busy}
           onCreate={onCreate}
+          onUpload={onUpload}
           onClose={() => setCreating(false)}
         />
       )}
     </section>
   );
 }
+// Foto en las ventanas de producto: vista previa y elegir archivo. El archivo
+// se sube al guardar (subida y redimensión: uploadProductPhoto).
+function PhotoPicker({ current, file, onFile, disabled }) {
+  const [preview, setPreview] = useState(null);
+  useEffect(() => {
+    if (!file) return setPreview(null);
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+  const src = preview || current;
+  return (
+    <aside className="pm-photo">
+      <span className="pm-photo-label">Foto del producto</span>
+      <div className="pm-photo-box">
+        {src ? <img src={src} alt="Vista previa de la foto" /> : <Package size={40} aria-hidden="true" />}
+      </div>
+      <label className={"filebtn pm-photo-btn" + (disabled ? " is-disabled" : "")}>
+        <input
+          type="file"
+          className="sr-only"
+          accept="image/jpeg,image/png,image/webp"
+          disabled={disabled}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (f) onFile(f);
+          }}
+        />
+        <ImagePlus size={16} aria-hidden="true" /> {src ? "Cambiar foto" : "Cargar foto"}
+      </label>
+      {file ? (
+        <small className="pm-photo-help">
+          {file.name} · se guarda al pulsar el botón de guardar.{" "}
+          <button type="button" className="linkbtn" disabled={disabled} onClick={() => onFile(null)}>
+            Quitar
+          </button>
+        </small>
+      ) : (
+        <small className="pm-photo-help">JPG, PNG o WebP. Se ajusta el tamaño automáticamente.</small>
+      )}
+    </aside>
+  );
+}
 // Ventana "Nuevo producto" (solo Administrador).
-function ProductCreateModal({ products, suppliers, busy, onCreate, onClose }) {
+function ProductCreateModal({ products, suppliers, busy, onCreate, onUpload, onClose }) {
   const formId = "product-new";
+  const [file, setFile] = useState(null);
+  const [saving, setSaving] = useState(false);
   async function submit(e) {
-    const ok = await onCreate(e);
-    if (ok) onClose();
+    if (saving) return;
+    setSaving(true);
+    const created = await onCreate(e);
+    // La foto se sube cuando el producto ya existe (necesita su id).
+    if (created && file) await onUpload(created, file);
+    setSaving(false);
+    if (created) onClose();
   }
+  busy = busy || saving;
   return (
     <Modal
       title="Nuevo producto"
@@ -3089,6 +3148,7 @@ function ProductCreateModal({ products, suppliers, busy, onCreate, onClose }) {
         </>
       }
     >
+      <div className="pm-layout">
       <form id={formId} className="editgrid productedit" onSubmit={submit}>
         <label className="span2">
           Nombre
@@ -3114,15 +3174,13 @@ function ProductCreateModal({ products, suppliers, busy, onCreate, onClose }) {
           Precio mayorista (COP)
           <input name="price_wholesale" type="number" min="0" step="1" inputMode="numeric" />
         </label>
-        <label>
-          URL de fotografía (opcional)
-          <input name="image_url" type="url" />
-        </label>
         <label className="span2">
           Descripción
           <input name="description" />
         </label>
       </form>
+      <PhotoPicker file={file} onFile={setFile} disabled={busy} />
+      </div>
     </Modal>
   );
 }
@@ -3177,7 +3235,8 @@ function SupplierSelect({ suppliers = [], defaultValue = "" }) {
 }
 // Ventana para editar un producto (solo Administrador). Los pedidos ya
 // creados no cambian: guardan su propio precio.
-function ProductEditModal({ product, products = [], suppliers = [], onSave, onClose }) {
+function ProductEditModal({ product, products = [], suppliers = [], onSave, onUpload, onClose }) {
+  const [file, setFile] = useState(null);
   const [saving, setSaving] = useState(false);
   const formId = `product-${product.id}`;
   const num = (v) => (v === "" || v == null ? null : Number(v));
@@ -3196,8 +3255,10 @@ function ProductEditModal({ product, products = [], suppliers = [], onSave, onCl
       price_wholesale: num(f.get("price_wholesale")),
       description: String(f.get("description") || "").trim() || null,
     });
+    // La foto nueva se sube solo al guardar (Cancelar no cambia nada).
+    const photoOk = ok && file && onUpload ? await onUpload(product, file) : true;
     setSaving(false);
-    if (ok) onClose();
+    if (ok && photoOk) onClose();
   }
   return (
     <Modal
@@ -3218,6 +3279,7 @@ function ProductEditModal({ product, products = [], suppliers = [], onSave, onCl
         </>
       }
     >
+      <div className="pm-layout">
       <form id={formId} className="editgrid productedit" onSubmit={submit}>
         <label className="span2">
           Nombre
@@ -3248,6 +3310,8 @@ function ProductEditModal({ product, products = [], suppliers = [], onSave, onCl
           <input name="description" defaultValue={product.description || ""} />
         </label>
       </form>
+      <PhotoPicker current={product.image_url} file={file} onFile={setFile} disabled={saving} />
+      </div>
     </Modal>
   );
 }
