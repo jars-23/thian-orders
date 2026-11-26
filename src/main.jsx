@@ -35,6 +35,9 @@ import {
   ArrowUpDown,
   ChevronLeft,
   ChevronRight,
+  List,
+  Search,
+  Power,
 } from "lucide-react";
 import "./style.css";
 import { ThemeProvider, CssBaseline } from "@mui/material";
@@ -411,7 +414,7 @@ function App() {
     const supplierId = await resolveSupplier(f.get("supplier_id"), f.get("supplier_new"));
     if (supplierId === undefined) {
       setBusy(false);
-      return;
+      return false;
     }
     const { error } = await supabase
       .from("products")
@@ -432,6 +435,7 @@ function App() {
       await reload();
     }
     setBusy(false);
+    return !error;
   }
   async function createOrder(e, lines, wholesale, payment) {
     e.preventDefault();
@@ -844,168 +848,19 @@ function App() {
           />
         )}
         {tab === "products" && (
-          <>
-            <div className="panel">
-              <h2>Catálogo de productos</h2>
-              {admin && (
-                <form className="formgrid" onSubmit={createProduct}>
-                  <input
-                    name="name"
-                    placeholder="Nombre del producto"
-                    required
-                  />
-                  <input
-                    name="sku"
-                    key={nextSku(products)}
-                    defaultValue={nextSku(products)}
-                    placeholder="Referencia / SKU (opcional)"
-                  />
-                  <CategorySelect products={products} />
-                  <SupplierSelect suppliers={suppliers} />
-                  <input
-                    name="price"
-                    type="number"
-                    min="0"
-                    step="1"
-                    inputMode="numeric"
-                    placeholder="Precio general (COP)"
-                    aria-label="Precio general en pesos"
-                  />
-                  <input
-                    name="price_wholesale"
-                    type="number"
-                    min="0"
-                    step="1"
-                    inputMode="numeric"
-                    placeholder="Precio mayorista (COP)"
-                    aria-label="Precio mayorista en pesos"
-                  />
-                  <input
-                    name="image_url"
-                    type="url"
-                    placeholder="URL de fotografía (opcional)"
-                  />
-                  <input name="description" placeholder="Descripción" />
-                  <button disabled={busy}>Agregar producto</button>
-                </form>
-              )}
-            </div>
-            <div className="panel tablewrap">
-              <table>
-                <thead>
-                  <tr>
-                    {[
-                      ["name", "Producto"],
-                      ["category", "Categoría"],
-                      ...(admin ? [["supplier_name", "Proveedor"]] : []),
-                      ["sku", "Referencia"],
-                      ["price", "Precio", "num"],
-                      ["price_wholesale", "Mayorista", "num"],
-                      ["active", "Estado"],
-                    ].map(([key, label, cls]) => (
-                      <SortTh
-                        key={key}
-                        sortKey={key}
-                        label={label}
-                        className={cls}
-                        sort={productSort}
-                        onSort={setProductSort}
-                      />
-                    ))}
-                    {admin && <th>Acción</th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortRows(
-                    products.map((p) => ({
-                      ...p,
-                      supplier_name: suppliers.find((x) => x.id === p.supplier_id)?.name || null,
-                    })),
-                    productSort,
-                  ).map((p) => (
-                    <tr key={p.id}>
-                      <td>
-                        <div className="prodcell">
-                          <span className="cartthumb" aria-hidden="true">
-                            {p.image_url ? (
-                              <img
-                                src={p.image_url}
-                                alt=""
-                                width="40"
-                                height="40"
-                                loading="lazy"
-                              />
-                            ) : (
-                              <Package size={16} />
-                            )}
-                          </span>
-                          {p.name}
-                        </div>
-                      </td>
-                      <td>{p.category || "—"}</td>
-                      {admin && <td>{p.supplier_name || "—"}</td>}
-                      <td>{p.sku || "—"}</td>
-                      <td className="num">{fmtMoney(p.price)}</td>
-                      <td className="num">{fmtMoney(p.price_wholesale)}</td>
-                      <td>{p.active ? "Activo" : "Inactivo"}</td>
-                      {admin && (
-                        <td>
-                          <div className="rowactions">
-                            <label
-                              className={
-                                "filebtn" +
-                                (uploadingId ? " is-disabled" : "")
-                              }
-                            >
-                              <input
-                                type="file"
-                                className="sr-only"
-                                accept="image/jpeg,image/png,image/webp"
-                                disabled={!!uploadingId}
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  e.target.value = "";
-                                  uploadProductPhoto(p, file);
-                                }}
-                              />
-                              {uploadingId === p.id ? (
-                                <Loader2
-                                  size={15}
-                                  className="spin"
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <ImagePlus size={15} aria-hidden="true" />
-                              )}
-                              {uploadingId === p.id
-                                ? "Subiendo…"
-                                : p.image_url
-                                  ? "Cambiar foto"
-                                  : "Subir foto"}
-                            </label>
-                            <button
-                              className="secondary compact"
-                              disabled={busy}
-                              onClick={() => setEditingProduct(p)}
-                            >
-                              <Pencil size={15} aria-hidden="true" /> Editar
-                            </button>
-                            <button
-                              className="secondary compact"
-                              disabled={busy}
-                              onClick={() => changeProduct(p.id, !p.active)}
-                            >
-                              {p.active ? "Desactivar" : "Activar"}
-                            </button>
-                          </div>
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
+          <ProductsView
+            products={products}
+            suppliers={suppliers}
+            admin={admin}
+            busy={busy}
+            uploadingId={uploadingId}
+            sort={productSort}
+            onSort={setProductSort}
+            onCreate={createProduct}
+            onEdit={setEditingProduct}
+            onUpload={uploadProductPhoto}
+            onToggle={changeProduct}
+          />
         )}
         {tab === "sellers" && admin && (
           <div className="panel tablewrap">
@@ -2920,6 +2775,355 @@ function CategorySelect({ products, defaultValue = "" }) {
       )}
       <input type="hidden" name="category" value={isNew ? custom : choice} />
     </>
+  );
+}
+// Color fijo por categoría (mismo nombre = mismo color).
+const catTone = (name) => {
+  let h = 0;
+  for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return "cat-" + (h % 6);
+};
+// Listado de productos: buscador, filtro por categoría, tabla paginada y
+// alta en ventana. Desactivar no borra: los pedidos ya creados lo usan.
+function ProductsView({
+  products,
+  suppliers = [],
+  admin,
+  busy,
+  uploadingId,
+  sort,
+  onSort,
+  onCreate,
+  onEdit,
+  onUpload,
+  onToggle,
+}) {
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [creating, setCreating] = useState(false);
+  const categories = [
+    ...new Set(products.map((p) => p.category?.trim()).filter(Boolean)),
+  ].sort((a, b) => a.localeCompare(b, "es"));
+  const q = query.trim().toLowerCase();
+  const rows = sortRows(
+    products
+      .filter((p) => !category || (p.category || "").trim() === category)
+      .filter(
+        (p) =>
+          !q ||
+          p.name.toLowerCase().includes(q) ||
+          (p.sku || "").toLowerCase().includes(q),
+      )
+      .map((p) => ({
+        ...p,
+        supplier_name: suppliers.find((x) => x.id === p.supplier_id)?.name || null,
+      })),
+    sort,
+  );
+  const total = rows.length;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const current = Math.min(page, pages);
+  const from = total ? (current - 1) * pageSize + 1 : 0;
+  const to = Math.min(current * pageSize, total);
+  const visible = rows.slice(from ? from - 1 : 0, to);
+  useEffect(() => setPage(1), [query, category, pageSize]);
+  const columns = [
+    ["name", "Producto"],
+    ["category", "Categoría"],
+    ...(admin ? [["supplier_name", "Proveedor"]] : []),
+    ["price", "Precio", "num"],
+    ["price_wholesale", "Mayorista", "num"],
+    ["active", "Estado"],
+  ];
+  function toggle(p) {
+    if (
+      p.active &&
+      !window.confirm(
+        `¿Desactivar «${p.name}»? No se borra: deja de aparecer al crear pedidos y se puede activar de nuevo.`,
+      )
+    )
+      return;
+    onToggle(p.id, !p.active);
+  }
+  return (
+    <section className="panel plist">
+      <header className="plist-head">
+        <h2>
+          <List size={26} aria-hidden="true" /> Listado de productos
+        </h2>
+        {admin && (
+          <button type="button" className="plist-new" onClick={() => setCreating(true)}>
+            <Plus size={20} aria-hidden="true" /> Nuevo producto
+          </button>
+        )}
+      </header>
+      <div className="plist-filters">
+        <label className="plist-search">
+          <Search size={18} aria-hidden="true" />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Buscar producto…"
+            aria-label="Buscar producto por nombre o referencia"
+          />
+        </label>
+        <select
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          aria-label="Filtrar por categoría"
+        >
+          <option value="">Todas las categorías</option>
+          {categories.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="tablewrap">
+        <table className="plist-table">
+          <thead>
+            <tr>
+              <th className="num">#</th>
+              <th>Imagen</th>
+              {columns.map(([key, label, cls]) => (
+                <SortTh
+                  key={key}
+                  sortKey={key}
+                  label={label}
+                  className={cls}
+                  sort={sort}
+                  onSort={onSort}
+                />
+              ))}
+              {admin && <th className="plist-actions-h">Acciones</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((p, i) => (
+              <tr key={p.id} className={p.active ? "" : "is-inactive"}>
+                <td className="num plist-n">{from + i}</td>
+                <td>
+                  <span className="plist-thumb" aria-hidden="true">
+                    {p.image_url ? (
+                      <img src={p.image_url} alt="" width="64" height="52" loading="lazy" />
+                    ) : (
+                      <Package size={20} />
+                    )}
+                  </span>
+                </td>
+                <td>
+                  <b className="plist-name">{p.name}</b>
+                  {p.sku && <small className="plist-sku">{p.sku}</small>}
+                </td>
+                <td>
+                  {p.category ? (
+                    <span className={"cat-tag " + catTone(p.category.trim())}>{p.category}</span>
+                  ) : (
+                    "—"
+                  )}
+                </td>
+                {admin && <td>{p.supplier_name || "—"}</td>}
+                <td className="num plist-money">{fmtMoney(p.price)}</td>
+                <td className="num plist-money">
+                  {p.price_wholesale == null ? "—" : fmtMoney(p.price_wholesale)}
+                </td>
+                <td>
+                  <span className={"state-tag " + (p.active ? "on" : "off")}>
+                    {p.active ? "Activo" : "Inactivo"}
+                  </span>
+                </td>
+                {admin && (
+                  <td>
+                    <div className="plist-actions">
+                      <button
+                        type="button"
+                        className="iconbtn edit"
+                        disabled={busy}
+                        onClick={() => onEdit(p)}
+                        aria-label={`Editar ${p.name}`}
+                        title="Editar"
+                      >
+                        <Pencil size={18} aria-hidden="true" />
+                      </button>
+                      <label
+                        className={"iconbtn photo" + (uploadingId ? " is-disabled" : "")}
+                        title={p.image_url ? "Cambiar foto" : "Subir foto"}
+                      >
+                        <input
+                          type="file"
+                          className="sr-only"
+                          accept="image/jpeg,image/png,image/webp"
+                          disabled={!!uploadingId}
+                          aria-label={`${p.image_url ? "Cambiar" : "Subir"} foto de ${p.name}`}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = "";
+                            onUpload(p, file);
+                          }}
+                        />
+                        {uploadingId === p.id ? (
+                          <Loader2 size={18} className="spin" aria-hidden="true" />
+                        ) : (
+                          <ImagePlus size={18} aria-hidden="true" />
+                        )}
+                      </label>
+                      <button
+                        type="button"
+                        className={"iconbtn " + (p.active ? "danger" : "ok")}
+                        disabled={busy}
+                        onClick={() => toggle(p)}
+                        aria-label={`${p.active ? "Desactivar" : "Activar"} ${p.name}`}
+                        title={p.active ? "Desactivar" : "Activar"}
+                      >
+                        {p.active ? (
+                          <Trash2 size={18} aria-hidden="true" />
+                        ) : (
+                          <Power size={18} aria-hidden="true" />
+                        )}
+                      </button>
+                    </div>
+                  </td>
+                )}
+              </tr>
+            ))}
+            {!visible.length && (
+              <tr>
+                <td colSpan={columns.length + 2 + (admin ? 1 : 0)} className="plist-empty">
+                  {products.length ? "Ningún producto coincide con la búsqueda." : "Aún no hay productos."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <footer className="plist-foot">
+        <span className="pager-info">
+          Mostrando {from} – {to} de {total} productos
+        </span>
+        <nav className="plist-pages" aria-label="Paginación de productos">
+          <button
+            type="button"
+            className="pagebtn"
+            disabled={current <= 1}
+            onClick={() => setPage(current - 1)}
+            aria-label="Página anterior"
+          >
+            <ChevronLeft size={18} aria-hidden="true" />
+          </button>
+          {Array.from({ length: pages }, (_, i) => i + 1)
+            .filter((n) => n === 1 || n === pages || Math.abs(n - current) <= 1)
+            .map((n, i, arr) => (
+              <React.Fragment key={n}>
+                {i > 0 && n - arr[i - 1] > 1 && <span className="pagegap">…</span>}
+                <button
+                  type="button"
+                  className={"pagebtn" + (n === current ? " on" : "")}
+                  aria-current={n === current ? "page" : undefined}
+                  onClick={() => setPage(n)}
+                >
+                  {n}
+                </button>
+              </React.Fragment>
+            ))}
+          <button
+            type="button"
+            className="pagebtn"
+            disabled={current >= pages}
+            onClick={() => setPage(current + 1)}
+            aria-label="Página siguiente"
+          >
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
+        </nav>
+        <select
+          value={pageSize}
+          onChange={(e) => setPageSize(Number(e.target.value))}
+          aria-label="Productos por página"
+        >
+          {[10, 25, 50].map((n) => (
+            <option key={n} value={n}>
+              {n} por página
+            </option>
+          ))}
+        </select>
+      </footer>
+      {creating && (
+        <ProductCreateModal
+          products={products}
+          suppliers={suppliers}
+          busy={busy}
+          onCreate={onCreate}
+          onClose={() => setCreating(false)}
+        />
+      )}
+    </section>
+  );
+}
+// Ventana "Nuevo producto" (solo Administrador).
+function ProductCreateModal({ products, suppliers, busy, onCreate, onClose }) {
+  const formId = "product-new";
+  async function submit(e) {
+    const ok = await onCreate(e);
+    if (ok) onClose();
+  }
+  return (
+    <Modal
+      title="Nuevo producto"
+      onClose={onClose}
+      footer={
+        <>
+          <span />
+          <span className="modal-actions">
+            <button type="button" className="secondary" disabled={busy} onClick={onClose}>
+              Cancelar
+            </button>
+            <button type="submit" form={formId} disabled={busy}>
+              {busy && <Loader2 size={16} className="spin" aria-hidden="true" />}
+              {busy ? "Guardando…" : "Agregar producto"}
+            </button>
+          </span>
+        </>
+      }
+    >
+      <form id={formId} className="editgrid productedit" onSubmit={submit}>
+        <label className="span2">
+          Nombre
+          <input name="name" required />
+        </label>
+        <label>
+          Categoría / línea
+          <CategorySelect products={products} />
+        </label>
+        <label>
+          Proveedor
+          <SupplierSelect suppliers={suppliers} />
+        </label>
+        <label>
+          Referencia / SKU
+          <input name="sku" defaultValue={nextSku(products)} />
+        </label>
+        <label>
+          Precio general (COP)
+          <input name="price" type="number" min="0" step="1" inputMode="numeric" />
+        </label>
+        <label>
+          Precio mayorista (COP)
+          <input name="price_wholesale" type="number" min="0" step="1" inputMode="numeric" />
+        </label>
+        <label>
+          URL de fotografía (opcional)
+          <input name="image_url" type="url" />
+        </label>
+        <label className="span2">
+          Descripción
+          <input name="description" />
+        </label>
+      </form>
+    </Modal>
   );
 }
 // Lista desplegable de proveedores (solo Administrador): los registrados más
