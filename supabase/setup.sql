@@ -1167,3 +1167,25 @@ END; $$;
 
 REVOKE ALL ON FUNCTION public.void_invoice(uuid, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.void_invoice(uuid, text) TO authenticated;
+
+-- =====================================================================
+-- 16. Proveedor del producto (migración 20261126).
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS public.suppliers (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name       text NOT NULL UNIQUE CHECK (length(trim(name)) > 0),
+  active     boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.suppliers ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "suppliers read" ON public.suppliers FOR SELECT TO authenticated
+  USING (public.is_active_user());
+CREATE POLICY "suppliers admin insert" ON public.suppliers FOR INSERT TO authenticated
+  WITH CHECK (public.is_admin());
+CREATE POLICY "suppliers admin update" ON public.suppliers FOR UPDATE TO authenticated
+  USING (public.is_admin()) WITH CHECK (public.is_admin());
+GRANT SELECT, INSERT, UPDATE ON public.suppliers TO authenticated;
+
+ALTER TABLE public.products
+  ADD COLUMN IF NOT EXISTS supplier_id uuid REFERENCES public.suppliers(id) ON DELETE RESTRICT;
+CREATE INDEX IF NOT EXISTS products_supplier_idx ON public.products (supplier_id);

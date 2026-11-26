@@ -117,6 +117,7 @@ function App() {
     [assignments, setAssignments] = useState([]),
     [tab, setTab] = useState("dashboard"),
     [products, setProducts] = useState([]),
+    [suppliers, setSuppliers] = useState([]),
     [orders, setOrders] = useState([]),
     [sellers, setSellers] = useState([]),
     [zones, setZones] = useState([]),
@@ -211,7 +212,7 @@ function App() {
   async function reload() {
     if (!profile?.active) return;
     setBusy(true);
-    const [p, o, sn, s, r, ur, z, inv] = await Promise.all([
+    const [p, o, sn, s, r, ur, z, inv, sup] = await Promise.all([
       supabase
         .from("products")
         .select("*")
@@ -239,11 +240,17 @@ function App() {
       canBill
         ? supabase.from("invoices").select("*").order("created_at", { ascending: false })
         : Promise.resolve({ data: [], error: null }),
+      admin
+        ? supabase.from("suppliers").select("*").order("name")
+        : Promise.resolve({ data: [], error: null }),
     ]);
     const err = p.error || o.error || s.error || r.error || ur.error;
     if (err) message(err);
     else {
       setProducts(p.data || []);
+      // Si la migración de proveedores no está aplicada, el catálogo sigue igual.
+      if (sup.error) console.warn("suppliers:", sup.error.message);
+      setSuppliers(sup.data || []);
       // Si la RPC falla (p. ej. migración sin aplicar) los pedidos se
       // muestran igual, con "—" como vendedor.
       if (sn.error) console.warn("order_seller_names:", sn.error.message);
@@ -380,13 +387,36 @@ function App() {
     }
     setBusy(false);
   }
+  // Devuelve el id del proveedor elegido; si se escribió uno nuevo, lo crea.
+  // undefined = no se pudo crear (el error ya se mostró).
+  async function resolveSupplier(id, newName) {
+    const name = String(newName || "").trim();
+    if (!name) return id || null;
+    const { data, error } = await supabase
+      .from("suppliers")
+      .insert({ name })
+      .select("id")
+      .single();
+    if (error) {
+      message(error);
+      return undefined;
+    }
+    return data.id;
+  }
   async function createProduct(e) {
     e.preventDefault();
+    const form = e.currentTarget;
     setBusy(true);
-    const f = new FormData(e.currentTarget);
+    const f = new FormData(form);
+    const supplierId = await resolveSupplier(f.get("supplier_id"), f.get("supplier_new"));
+    if (supplierId === undefined) {
+      setBusy(false);
+      return;
+    }
     const { error } = await supabase
       .from("products")
       .insert({
+        supplier_id: supplierId,
         name: f.get("name").trim(),
         sku: f.get("sku")?.trim() || null,
         category: f.get("category")?.trim() || null,
@@ -398,7 +428,7 @@ function App() {
       });
     message(error, "Producto registrado");
     if (!error) {
-      e.currentTarget.reset();
+      form.reset();
       await reload();
     }
     setBusy(false);
@@ -458,7 +488,12 @@ function App() {
     if (!error) await reload();
     return !error;
   }
-  async function updateProduct(id, patch) {
+  async function updateProduct(id, { supplier_new, ...patch }) {
+    if ("supplier_id" in patch) {
+      const supplierId = await resolveSupplier(patch.supplier_id, supplier_new);
+      if (supplierId === undefined) return false;
+      patch.supplier_id = supplierId;
+    }
     const { error } = await supabase.from("products").update(patch).eq("id", id);
     message(error, "Producto actualizado");
     if (!error) await reload();
@@ -803,6 +838,7 @@ function App() {
           <ProductEditModal
             product={editingProduct}
             products={products}
+            suppliers={suppliers}
             onSave={updateProduct}
             onClose={() => setEditingProduct(null)}
           />
@@ -825,6 +861,7 @@ function App() {
                     placeholder="Referencia / SKU (opcional)"
                   />
                   <CategorySelect products={products} />
+                  <SupplierSelect suppliers={suppliers} />
                   <input
                     name="price"
                     type="number"
@@ -860,6 +897,7 @@ function App() {
                     {[
                       ["name", "Producto"],
                       ["category", "Categoría"],
+                      ...(admin ? [["supplier_name", "Proveedor"]] : []),
                       ["sku", "Referencia"],
                       ["price", "Precio", "num"],
                       ["price_wholesale", "Mayorista", "num"],
@@ -878,7 +916,13 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortRows(products, productSort).map((p) => (
+                  {sortRows(
+                    products.map((p) => ({
+                      ...p,
+                      supplier_name: suppliers.find((x) => x.id === p.supplier_id)?.name || null,
+                    })),
+                    productSort,
+                  ).map((p) => (
                     <tr key={p.id}>
                       <td>
                         <div className="prodcell">
@@ -899,6 +943,7 @@ function App() {
                         </div>
                       </td>
                       <td>{p.category || "—"}</td>
+                      {admin && <td>{p.supplier_name || "—"}</td>}
                       <td>{p.sku || "—"}</td>
                       <td className="num">{fmtMoney(p.price)}</td>
                       <td className="num">{fmtMoney(p.price_wholesale)}</td>
@@ -2877,9 +2922,58 @@ function CategorySelect({ products, defaultValue = "" }) {
     </>
   );
 }
+// Lista desplegable de proveedores (solo Administrador): los registrados más
+// "Nuevo proveedor…". Viaja en campos ocultos supplier_id / supplier_new.
+function SupplierSelect({ suppliers = [], defaultValue = "" }) {
+  const [choice, setChoice] = useState(defaultValue);
+  const [custom, setCustom] = useState("");
+  const selectRef = useRef(null);
+  useEffect(() => {
+    const form = selectRef.current?.form;
+    if (!form) return;
+    const onReset = () => {
+      setChoice(defaultValue);
+      setCustom("");
+    };
+    form.addEventListener("reset", onReset);
+    return () => form.removeEventListener("reset", onReset);
+  }, [defaultValue]);
+  const isNew = choice === "__new__";
+  const options = suppliers.filter((x) => x.active || x.id === defaultValue);
+  return (
+    <>
+      <select
+        ref={selectRef}
+        value={choice}
+        onChange={(e) => setChoice(e.target.value)}
+        aria-label="Proveedor"
+      >
+        <option value="">Sin proveedor</option>
+        {options.map((x) => (
+          <option key={x.id} value={x.id}>
+            {x.name}
+          </option>
+        ))}
+        <option value="__new__">+ Nuevo proveedor…</option>
+      </select>
+      {isNew && (
+        <input
+          value={custom}
+          onChange={(e) => setCustom(e.target.value)}
+          placeholder="Nombre del nuevo proveedor"
+          aria-label="Nuevo proveedor"
+          required
+          autoFocus
+        />
+      )}
+      <input type="hidden" name="supplier_id" value={isNew ? "" : choice} />
+      <input type="hidden" name="supplier_new" value={isNew ? custom : ""} />
+    </>
+  );
+}
 // Ventana para editar un producto (solo Administrador). Los pedidos ya
 // creados no cambian: guardan su propio precio.
-function ProductEditModal({ product, products = [], onSave, onClose }) {
+function ProductEditModal({ product, products = [], suppliers = [], onSave, onClose }) {
   const [saving, setSaving] = useState(false);
   const formId = `product-${product.id}`;
   const num = (v) => (v === "" || v == null ? null : Number(v));
@@ -2892,6 +2986,8 @@ function ProductEditModal({ product, products = [], onSave, onClose }) {
       name: String(f.get("name") || "").trim(),
       sku: String(f.get("sku") || "").trim() || null,
       category: String(f.get("category") || "").trim() || null,
+      supplier_id: String(f.get("supplier_id") || "") || null,
+      supplier_new: String(f.get("supplier_new") || "").trim(),
       price: num(f.get("price")),
       price_wholesale: num(f.get("price_wholesale")),
       description: String(f.get("description") || "").trim() || null,
@@ -2926,6 +3022,10 @@ function ProductEditModal({ product, products = [], onSave, onClose }) {
         <label>
           Categoría / línea
           <CategorySelect products={products} defaultValue={product.category || ""} />
+        </label>
+        <label>
+          Proveedor
+          <SupplierSelect suppliers={suppliers} defaultValue={product.supplier_id || ""} />
         </label>
         <label>
           Referencia / SKU
