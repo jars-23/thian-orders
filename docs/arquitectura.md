@@ -37,6 +37,7 @@ flowchart LR
 | `order_seller_names` | Todos | Nombre del vendedor de pedidos visibles |
 | `my_roles` | Todos | Roles del usuario actual |
 | `register_payment` | — | Sin uso en la UI (los pagos se ajustan en Editar) |
+| `void_invoice` | Admin | Anula una factura con motivo (no la borra); el pedido vuelve a Por facturar |
 | `cancel_order` | Admin, billing; vendedor dueño si todo está pendiente | Marca el pedido como cancelado con motivo (no borra) |
 
 ## Frontend (medido: `src/main.jsx`)

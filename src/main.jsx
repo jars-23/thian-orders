@@ -440,6 +440,15 @@ function App() {
     setBusy(false);
     return error ? null : data;
   }
+  async function voidInvoice(invoiceId, reason) {
+    const { error } = await supabase.rpc("void_invoice", {
+      p_invoice_id: invoiceId,
+      p_reason: reason,
+    });
+    message(error, "Factura anulada: el pedido vuelve a Por facturar");
+    if (!error) await reload();
+    return !error;
+  }
   async function cancelOrder(orderId, reason) {
     const { error } = await supabase.rpc("cancel_order", {
       p_order_id: orderId,
@@ -777,7 +786,9 @@ function App() {
             invoices={invoices}
             zones={zones}
             busy={busy}
+            admin={admin}
             onCreate={createInvoice}
+            onVoid={voidInvoice}
           />
         )}
         {tab === "new" && canSell && (
@@ -2444,7 +2455,8 @@ function Orders({ orders, busy, canBill, admin = false, userId, canSell, onEdit,
   const [photo, setPhoto] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const zoneName = new Map(zones.map((z) => [z.code, z.name]));
-  const invoiceOf = new Map(invoices.map((x) => [x.order_id, x]));
+  // Solo cuenta la factura activa (las anuladas no bloquean el pedido).
+  const invoiceOf = new Map(invoices.filter((x) => !x.voided_at).map((x) => [x.order_id, x]));
   // Debe coincidir con update_order (SQL).
   const canEdit = (o) => !o.cancelled_at && (canBill || (canSell && o.seller_id === userId));
   // Debe coincidir con cancel_order (SQL): admin y Facturación siempre; el
@@ -3244,7 +3256,16 @@ function invoiceDraft(order, zones) {
 function InvoiceDoc({ inv }) {
   const draft = inv.invoice_number == null;
   return (
-    <article className={"invoice-doc" + (draft ? " draft" : "")}>
+    <article className={"invoice-doc" + (draft ? " draft" : "") + (inv.voided_at ? " voided" : "")}>
+      {inv.voided_at && (
+        <div className="inv-void" role="note">
+          <b>ANULADA</b>
+          <span>
+            {new Date(inv.voided_at).toLocaleDateString("es-CO")}
+            {inv.void_reason && <> · Motivo: {inv.void_reason}</>}
+          </span>
+        </div>
+      )}
       <header className="inv-head">
         <div>
           <div className="inv-brand">Thian Candle</div>
@@ -3342,7 +3363,67 @@ function InvoiceModal({ inv, title, onClose, actions }) {
     </Modal>
   );
 }
-function Billing({ orders, invoices, zones, busy, onCreate }) {
+// Ventana para anular una factura: motivo obligatorio. La factura no se borra.
+function VoidInvoiceModal({ inv, onConfirm, onClose }) {
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  async function confirm() {
+    if (!reason.trim() || saving) return;
+    setSaving(true);
+    const ok = await onConfirm(inv.id, reason.trim());
+    setSaving(false);
+    if (ok) onClose();
+  }
+  return (
+    <Modal
+      title={`Anular factura ${fmtInvoice(inv.invoice_number)}`}
+      onClose={onClose}
+      footer={
+        <>
+          <span />
+          <span className="modal-actions">
+            <button type="button" className="secondary" disabled={saving} onClick={onClose}>
+              Volver
+            </button>
+            <button
+              type="button"
+              className="dangerbtn solid"
+              disabled={!reason.trim() || saving}
+              onClick={confirm}
+            >
+              {saving && <Loader2 size={16} className="spin" aria-hidden="true" />}
+              {saving ? "Anulando…" : "Anular factura"}
+            </button>
+          </span>
+        </>
+      }
+    >
+      <div className="cancelform">
+        <p>
+          La factura de <b>{inv.customer_name}</b> (pedido #{inv.order_number}, {fmtMoney(inv.total)})
+          quedará marcada como <b>anulada</b>: no se borra y conserva su número. El pedido vuelve a
+          «Por facturar» y se puede editar y facturar de nuevo con un número nuevo.
+        </p>
+        <label>
+          Motivo de la anulación
+          <textarea
+            rows={3}
+            required
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Ej.: se corrigen las cantidades del pedido"
+          />
+        </label>
+      </div>
+    </Modal>
+  );
+}
+function Billing({ orders, invoices: allInvoices, zones, busy, admin = false, onCreate, onVoid }) {
+  // Solo las facturas activas cuentan; las anuladas se listan aparte.
+  const invoices = allInvoices.filter((x) => !x.voided_at);
+  const voided = allInvoices.filter((x) => x.voided_at);
+  const [voidingId, setVoidingId] = useState(null);
+  const voiding = allInvoices.find((x) => x.id === voidingId);
   const [view, setView] = useState("todo");
   const [query, setQuery] = useState("");
   const [previewId, setPreviewId] = useState(null);
@@ -3359,13 +3440,13 @@ function Billing({ orders, invoices, zones, busy, onCreate }) {
     );
   const match = (num, name) => !q || String(num).includes(q) || name?.toLowerCase().includes(q);
   const pendingList = pending.filter((o) => match(o.order_number, o.customer_name));
-  const doneList = invoices.filter(
+  const doneList = [...invoices, ...voided].filter(
     (x) => match(x.order_number, x.customer_name) || fmtInvoice(x.invoice_number).toLowerCase().includes(q),
   );
   const readyCount = pending.filter(ready).length;
   const balance = invoices.reduce((s, x) => s + (x.balance || 0), 0);
   const preview = orders.find((o) => o.id === previewId);
-  const openInv = invoices.find((x) => x.id === openInvoiceId);
+  const openInv = allInvoices.find((x) => x.id === openInvoiceId);
   async function generate() {
     const n = await onCreate(preview.id);
     if (n == null) {
@@ -3379,7 +3460,7 @@ function Billing({ orders, invoices, zones, busy, onCreate }) {
   const lastCreated = useRef(null);
   useEffect(() => {
     if (!lastCreated.current) return;
-    const inv = invoices.find((x) => x.order_id === lastCreated.current);
+    const inv = invoices.find((x) => x.order_id === lastCreated.current && !x.voided_at);
     if (inv) {
       setOpenInvoiceId(inv.id);
       lastCreated.current = null;
@@ -3454,23 +3535,45 @@ function Billing({ orders, invoices, zones, busy, onCreate }) {
         <div className="billlist">
           {!doneList.length && <div className="panel empty">Aún no hay facturas.</div>}
           {doneList.map((x) => (
-            <article key={x.id} className="billrow">
+            <article key={x.id} className={"billrow" + (x.voided_at ? " voided" : "")}>
               <div className="br-main">
                 <b>{fmtInvoice(x.invoice_number)} · {x.customer_name}</b>
                 <small>
                   Pedido #{x.order_number} · {new Date(x.created_at).toLocaleDateString("es-CO")}
                   {x.delivery_zone_name && ` · ${x.delivery_zone_name}`}
                 </small>
+                {x.voided_at && (
+                  <small className="br-void">
+                    Anulada el {new Date(x.voided_at).toLocaleDateString("es-CO")}
+                    {x.void_reason && ` · ${x.void_reason}`}
+                  </small>
+                )}
               </div>
-              <span className={"pill " + (x.balance > 0 ? "pay-partial" : "pay-paid")}>
-                {x.balance > 0 ? `Saldo ${fmtMoney(x.balance)}` : "Pagada"}
-              </span>
+              {x.voided_at ? (
+                <span className="pill cancelled-pill">Anulada</span>
+              ) : (
+                <span className={"pill " + (x.balance > 0 ? "pay-partial" : "pay-paid")}>
+                  {x.balance > 0 ? `Saldo ${fmtMoney(x.balance)}` : "Pagada"}
+                </span>
+              )}
               <div className="br-money">
                 <b>{fmtMoney(x.total)}</b>
               </div>
-              <button type="button" className="secondary compact" onClick={() => setOpenInvoiceId(x.id)}>
-                <Eye size={15} aria-hidden="true" /> Ver factura
-              </button>
+              <span className="br-actions">
+                <button type="button" className="secondary compact" onClick={() => setOpenInvoiceId(x.id)}>
+                  <Eye size={15} aria-hidden="true" /> Ver factura
+                </button>
+                {admin && onVoid && !x.voided_at && (
+                  <button
+                    type="button"
+                    className="secondary compact dangerbtn"
+                    disabled={busy}
+                    onClick={() => setVoidingId(x.id)}
+                  >
+                    <X size={15} aria-hidden="true" /> Anular
+                  </button>
+                )}
+              </span>
             </article>
           ))}
         </div>
@@ -3508,10 +3611,13 @@ function Billing({ orders, invoices, zones, busy, onCreate }) {
           }
         />
       )}
+      {voiding && (
+        <VoidInvoiceModal inv={voiding} onConfirm={onVoid} onClose={() => setVoidingId(null)} />
+      )}
       {openInv && (
         <InvoiceModal
           inv={openInv}
-          title={`Factura ${fmtInvoice(openInv.invoice_number)}`}
+          title={`Factura ${fmtInvoice(openInv.invoice_number)}${openInv.voided_at ? " · ANULADA" : ""}`}
           onClose={() => setOpenInvoiceId(null)}
           actions={
             <>

@@ -826,7 +826,7 @@ BEGIN
   SELECT * INTO v_o FROM public.orders WHERE id = p_order_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Pedido no encontrado' USING ERRCODE = 'P0002'; END IF;
   IF v_o.cancelled_at IS NOT NULL THEN RAISE EXCEPTION 'El pedido está cancelado'; END IF;
-  IF EXISTS (SELECT 1 FROM public.invoices WHERE order_id = p_order_id) THEN
+  IF EXISTS (SELECT 1 FROM public.invoices WHERE order_id = p_order_id AND voided_at IS NULL) THEN
     RAISE EXCEPTION 'Este pedido ya tiene factura';
   END IF;
 
@@ -976,7 +976,7 @@ BEGIN
   END IF;
   IF nullif(trim(p_customer_name), '') IS NULL THEN RAISE EXCEPTION 'Cliente requerido'; END IF;
 
-  v_invoiced := EXISTS (SELECT 1 FROM public.invoices WHERE order_id = p_order_id);
+  v_invoiced := EXISTS (SELECT 1 FROM public.invoices WHERE order_id = p_order_id AND voided_at IS NULL);
   v_zone_changed := p_delivery_zone IS NOT NULL
                     AND p_delivery_zone IS DISTINCT FROM v_order.delivery_zone;
   IF v_invoiced AND (p_items IS NOT NULL OR v_zone_changed) THEN
@@ -1129,3 +1129,41 @@ GRANT EXECUTE ON FUNCTION public.update_order(uuid,text,text,text,text,text,inte
 -- 14. Precio mayorista por referencia (migración 20261124): ya aplicado
 --     dentro de create_order / update_order de la sección 13.
 -- =====================================================================
+
+-- =====================================================================
+-- 15. Anular factura y volver a facturar (migración 20261125).
+--     create_invoice / update_order de la sección 13 ya ignoran las anuladas.
+-- =====================================================================
+-- Columnas de anulación (la factura no se borra nunca)
+ALTER TABLE public.invoices
+  ADD COLUMN IF NOT EXISTS voided_at   timestamptz,
+  ADD COLUMN IF NOT EXISTS voided_by   uuid REFERENCES public.profiles(id),
+  ADD COLUMN IF NOT EXISTS void_reason text;
+
+-- Una sola factura ACTIVA por pedido (antes: una por pedido para siempre)
+ALTER TABLE public.invoices DROP CONSTRAINT IF EXISTS invoices_order_id_key;
+CREATE UNIQUE INDEX IF NOT EXISTS invoices_one_active_per_order
+  ON public.invoices (order_id) WHERE voided_at IS NULL;
+
+CREATE OR REPLACE FUNCTION public.void_invoice(p_invoice_id uuid, p_reason text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+  v_inv public.invoices%ROWTYPE;
+BEGIN
+  IF v_uid IS NULL OR NOT public.is_active_user() OR NOT public.is_admin() THEN
+    RAISE EXCEPTION 'Solo el Administrador anula facturas' USING ERRCODE = '42501';
+  END IF;
+  IF nullif(trim(p_reason), '') IS NULL THEN
+    RAISE EXCEPTION 'Indica el motivo de la anulación';
+  END IF;
+  SELECT * INTO v_inv FROM public.invoices WHERE id = p_invoice_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Factura no encontrada' USING ERRCODE = 'P0002'; END IF;
+  IF v_inv.voided_at IS NOT NULL THEN RAISE EXCEPTION 'La factura ya está anulada'; END IF;
+  UPDATE public.invoices
+     SET voided_at = now(), voided_by = v_uid, void_reason = trim(p_reason)
+   WHERE id = p_invoice_id;
+END; $$;
+
+REVOKE ALL ON FUNCTION public.void_invoice(uuid, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.void_invoice(uuid, text) TO authenticated;

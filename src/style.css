@@ -1690,3 +1690,15 @@ table.mini th, table.mini td { padding: 8px 6px }
 .reprice b { display: block; font-size: .9rem }
 .reprice small { display: block; margin-top: 2px; font-size: .78rem; color: var(--text-muted) }
 .reprice.on { border-color: var(--info); background: var(--info-bg) }
+
+/* Facturas anuladas */
+.br-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end }
+.billrow.voided { opacity: .75; border-left-color: var(--danger) }
+.billrow.voided .br-money b { text-decoration: line-through }
+.br-main small.br-void { color: var(--danger) }
+.invoice-doc.voided { position: relative }
+.inv-void { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; padding: 8px 12px; border: 2px solid var(--danger); border-radius: var(--radius-sm); color: var(--danger); background: var(--danger-bg) }
+.inv-void b { font-size: 1.1rem; letter-spacing: .12em }
+@media print {
+    .inv-void { color: #B42318; border-color: #B42318; background: none }
+}
