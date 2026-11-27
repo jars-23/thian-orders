@@ -2000,7 +2000,7 @@ tr.is-inactive .plist-thumb { opacity: .55 }
 .bcard-main b { font-size: 1.02rem; overflow-wrap: anywhere }
 .bcard-main small { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: .88rem }
 .bcard-main small svg { flex: none; color: var(--text-subtle) }
-.bcard-main .due { margin-top: 2px }
+.bcard-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px }
 .bcard-side { display: grid; gap: 8px; justify-items: end; text-align: right }
 .bcard-side strong { font-size: 1.12rem; font-variant-numeric: tabular-nums; white-space: nowrap }
 .bcard-go { color: var(--text-subtle) }
@@ -2020,8 +2020,8 @@ tr.is-inactive .plist-thumb { opacity: .55 }
     .billing .okpi-text strong.okpi-money { font-size: 1.05rem }
     .billing .okpi-text small { font-size: .8rem }
     /* Accesos: 3 del mismo ancho */
-    .bchips { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: visible; gap: 8px }
-    .bchips .ochip { justify-content: center; padding-left: 8px; padding-right: 8px; font-size: .88rem }
+    .bchips { display: flex; flex-wrap: nowrap; overflow: visible; gap: 6px }
+    .bchips .ochip { flex: 1 1 auto; justify-content: center; white-space: nowrap; padding-left: 8px; padding-right: 8px; font-size: .8rem }
     .bchips .ochip svg { display: none }
     /* Buscador + botón de filtros; el resto se pliega */
     .bfilters { padding: 0; background: transparent; border: 0; box-shadow: none }

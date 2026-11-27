@@ -5375,15 +5375,17 @@ function Billing({
                     <small>
                       <UserRound size={15} aria-hidden="true" /> Vendedor: {r.seller_name || "—"}
                     </small>
-                    <DueChip order={r} done={r.kind !== "todo"} />
+                    <span className="bcard-tags">
+                      <DueChip order={r} done={r.kind !== "todo"} />
+                      {r.kind === "todo" ? (
+                        <span className={"pill stage-" + r.stage}>{billStageLabel(r)}</span>
+                      ) : (
+                        <span className={"pill " + cls}>{label}</span>
+                      )}
+                    </span>
                   </span>
                   <span className="bcard-side">
                     <strong>{fmtMoney(r.total)}</strong>
-                    {r.kind === "todo" ? (
-                      <span className={"pill stage-" + r.stage}>{billStageLabel(r)}</span>
-                    ) : (
-                      <span className={"pill " + cls}>{label}</span>
-                    )}
                   </span>
                   <ChevronRight size={22} aria-hidden="true" className="bcard-go" />
                 </button>
