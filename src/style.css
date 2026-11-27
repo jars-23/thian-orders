@@ -1898,17 +1898,6 @@ tr.is-inactive .plist-thumb { opacity: .55 }
 .pill.stage-in_progress { background: #ECE4FA; color: #553A8C }
 .pill.stage-finished { background: var(--success-bg); color: var(--success) }
 .pill.stage-cancelled { background: var(--danger-bg); color: var(--danger) }
-.omenu { position: relative; display: inline-block }
-.omenu-list {
-  position: fixed; z-index: 1000; display: grid; min-width: 200px; padding: 6px;
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
-}
-.omenu-list button {
-  display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px; border: 0; border-radius: var(--radius-sm);
-  background: transparent; color: var(--text); text-align: left; font-weight: 500; cursor: pointer; min-height: 40px;
-}
-.omenu-list button:hover, .omenu-list button:focus-visible { background: var(--surface-muted); outline: 0 }
-.omenu-list button.danger { color: var(--danger) }
 @media (max-width: 1280px) {
   .okpis { grid-template-columns: repeat(3, minmax(0, 1fr)) }
 }

@@ -44,7 +44,7 @@ import {
   CreditCard,
   Download,
   MapPin,
-  MoreHorizontal,
+  FileText,
   RotateCcw,
   TrendingUp,
   TrendingDown,
@@ -2873,21 +2873,6 @@ function OrdersBoard({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [full, setFull] = useState(null); // { id, action }
-  // Menú ⋯: se pinta en <body> con posición fija para quedar por delante
-  // de la tabla (el contenedor con scroll lo recortaba).
-  const [menu, setMenu] = useState(null); // { id, top, right }
-  const menuId = menu?.id || null;
-  const setMenuId = (id) => setMenu(id ? menu : null);
-  function openMenu(e, id) {
-    if (menuId === id) return setMenu(null);
-    const r = e.currentTarget.getBoundingClientRect();
-    const below = window.innerHeight - r.bottom > 180;
-    setMenu({
-      id,
-      right: Math.max(8, window.innerWidth - r.right),
-      ...(below ? { top: r.bottom + 4 } : { bottom: window.innerHeight - r.top + 4 }),
-    });
-  }
   const [picked, setPicked] = useState(() => new Set());
   const [bulkSeller, setBulkSeller] = useState("");
   const bulk = admin && !!onAssignSeller && sellerOptions.length > 0;
@@ -3016,22 +3001,6 @@ function OrdersBoard({
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
-  useEffect(() => {
-    if (!menuId) return;
-    const close = (e) => !e.target.closest?.(".omenu, .omenu-list") && setMenu(null);
-    const esc = (e) => e.key === "Escape" && setMenu(null);
-    const away = () => setMenu(null);
-    document.addEventListener("click", close);
-    document.addEventListener("keydown", esc);
-    window.addEventListener("resize", away);
-    window.addEventListener("scroll", away, true);
-    return () => {
-      document.removeEventListener("click", close);
-      document.removeEventListener("keydown", esc);
-      window.removeEventListener("resize", away);
-      window.removeEventListener("scroll", away, true);
-    };
-  }, [menuId]);
   async function applyBulk() {
     const ok = await onAssignSeller([...picked], bulkSeller);
     if (ok) setPicked(new Set());
@@ -3226,7 +3195,7 @@ function OrdersBoard({
                 {visible.map((r) => (
                   <tr
                     key={r.id}
-                    className={(menuId === r.id ? "is-current " : "") + (r.stage === "cancelled" ? "is-inactive" : "")}
+                    className={r.stage === "cancelled" ? "is-inactive" : ""}
                   >
                     {bulk && (
                       <td className="ocheck">
@@ -3276,40 +3245,43 @@ function OrdersBoard({
                     </td>
                     <td>
                       <div className="plist-actions">
-                        <span className="omenu">
+                        <button
+                          type="button"
+                          className="iconbtn photo"
+                          onClick={() => setFull({ id: r.id })}
+                          aria-label={`Ver pedido completo #${r.order_number}`}
+                          title="Ver pedido completo"
+                        >
+                          <FileText size={18} aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          className="iconbtn edit"
+                          disabled={busy || !orderCanEdit(r, perms)}
+                          onClick={() => setFull({ id: r.id, action: "edit" })}
+                          aria-label={`Editar pedido #${r.order_number}`}
+                          title={orderCanEdit(r, perms) ? "Editar" : "No se puede editar"}
+                        >
+                          <Pencil size={18} aria-hidden="true" />
+                        </button>
+                        {onCancelOrder && (
                           <button
                             type="button"
-                            className="iconbtn"
-                            aria-haspopup="menu"
-                            aria-expanded={menuId === r.id}
-                            aria-label={`Más acciones del pedido #${r.order_number}`}
-                            onClick={(e) => openMenu(e, r.id)}
+                            className="iconbtn danger"
+                            disabled={busy || !orderCanCancel(r, { ...perms, invoiced: !!r.invoice })}
+                            onClick={() => setFull({ id: r.id, action: "cancel" })}
+                            aria-label={`Cancelar pedido #${r.order_number}`}
+                            title={
+                              orderCanCancel(r, { ...perms, invoiced: !!r.invoice })
+                                ? "Cancelar pedido"
+                                : r.invoice
+                                  ? "Facturado: anula la factura para cancelar"
+                                  : "No se puede cancelar"
+                            }
                           >
-                            <MoreHorizontal size={18} aria-hidden="true" />
+                            <Trash2 size={18} aria-hidden="true" />
                           </button>
-                          {menuId === r.id && createPortal(
-                            <span
-                              className="omenu-list"
-                              role="menu"
-                              style={{ top: menu.top, bottom: menu.bottom, right: menu.right }}
-                            >
-                              <button type="button" role="menuitem" onClick={() => { setMenuId(null); setFull({ id: r.id }); }}>
-                                <Eye size={15} aria-hidden="true" /> Ver pedido completo
-                              </button>
-                              {orderCanEdit(r, perms) && (
-                                <button type="button" role="menuitem" onClick={() => { setMenuId(null); setFull({ id: r.id, action: "edit" }); }}>
-                                  <Pencil size={15} aria-hidden="true" /> Editar
-                                </button>
-                              )}
-                              {onCancelOrder && orderCanCancel(r, { ...perms, invoiced: !!r.invoice }) && (
-                                <button type="button" role="menuitem" className="danger" onClick={() => { setMenuId(null); setFull({ id: r.id, action: "cancel" }); }}>
-                                  <X size={15} aria-hidden="true" /> Cancelar pedido
-                                </button>
-                              )}
-                            </span>,
-                            document.body,
-                          )}
-                        </span>
+                        )}
                       </div>
                     </td>
                   </tr>
