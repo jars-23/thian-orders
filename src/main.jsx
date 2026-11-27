@@ -3326,7 +3326,7 @@ function OrdersBoard({
         </section>
       </div>
       {quickOrder && (
-        <aside className="panel oquick" aria-label={`Detalle rápido del pedido #${quickOrder.order_number}`}>
+        <section className="panel oquick" aria-label={`Detalle rápido del pedido #${quickOrder.order_number}`}>
           <header className="oquick-head">
             <span className="oquick-title">
               <Package size={20} aria-hidden="true" /> Detalle rápido del pedido
@@ -3378,7 +3378,7 @@ function OrdersBoard({
           <button type="button" className="secondary oquick-full" onClick={() => setFull({ id: quickOrder.id })}>
             <Eye size={16} aria-hidden="true" /> Ver pedido completo
           </button>
-        </aside>
+        </section>
       )}
       {fullOrder && (
         <Modal title={`Pedido #${fullOrder.order_number}`} onClose={() => setFull(null)}>
