@@ -1529,6 +1529,8 @@ tfoot tr.subrow td { font-weight: 500; color: var(--text-muted) }
 }
 .invoice-doc.draft { background-image: repeating-linear-gradient(-45deg, transparent 0 22px, rgba(191, 82, 25, .035) 22px 44px) }
 .inv-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding-bottom: 16px; margin-bottom: 18px; border-bottom: 2px solid #BF5219 }
+.inv-id { display: flex; align-items: center; gap: 12px }
+.inv-logo { width: 45px; height: 60px; flex: none }
 .inv-brand { font-size: 1.6rem; font-weight: 700; color: #BF5219; letter-spacing: .02em }
 .inv-head small { display: block; color: #6B5A4E }
 .inv-no { display: grid; justify-items: end; text-align: right; gap: 2px }

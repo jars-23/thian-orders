@@ -4593,9 +4593,18 @@ function InvoiceDoc({ inv }) {
         </div>
       )}
       <header className="inv-head">
-        <div>
-          <div className="inv-brand">Thian Candle</div>
-          <small>Chispa de luz, fe y aroma</small>
+        <div className="inv-id">
+          <img
+            className="inv-logo"
+            src={`${import.meta.env.BASE_URL}logo-leon.png`}
+            alt=""
+            width="45"
+            height="60"
+          />
+          <div>
+            <div className="inv-brand">Thian Candle</div>
+            <small>Chispa de luz, fe y aroma</small>
+          </div>
         </div>
         <div className="inv-no">
           <span>Factura</span>
