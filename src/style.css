@@ -1831,3 +1831,14 @@ tr.is-inactive .plist-thumb { opacity: .55 }
   .settle-kpis { grid-template-columns: 1fr }
   .settle-nums { grid-template-columns: repeat(2, minmax(0, 1fr)) }
 }
+
+/* ---------- Asignar vendedor en bloque (admin) ---------- */
+.bulkbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 12px 16px }
+.bulkbar select { width: auto; min-width: 200px }
+.bulk-all { display: inline-flex; align-items: center; gap: 8px; font-weight: 600 }
+.bulk-count { color: var(--text-muted); font-size: .9rem; font-variant-numeric: tabular-nums }
+.orderpick { width: 20px; height: 20px; margin: 0 10px 0 0; vertical-align: -3px; accent-color: var(--primary); cursor: pointer }
+.panel.order.picked { box-shadow: 0 0 0 2px var(--primary) }
+@media (max-width: 760px) {
+  .bulkbar select, .bulkbar button { width: 100% }
+}

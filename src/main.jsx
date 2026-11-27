@@ -466,7 +466,8 @@ function App() {
     e.preventDefault();
     setBusy(true);
     const f = new FormData(e.currentTarget);
-    const { error } = await supabase.rpc("create_order", {
+    const sellerId = admin ? String(f.get("seller_id") || "") : "";
+    const { data: newId, error } = await supabase.rpc("create_order", {
       p_customer_name: f.get("customer_name"),
       p_customer_phone: f.get("customer_phone"),
       p_delivery_date: f.get("delivery_date") || null,
@@ -484,12 +485,46 @@ function App() {
       p_amount_paid: payment?.amount ?? null,
       p_delivery_zone: f.get("delivery_zone") || null,
     });
-    message(error, "Orden generada correctamente");
+    // Admin: create_order siempre deja como vendedor a quien lo crea; si se
+    // eligió otro vendedor, se reasigna (RLS "orders admin update").
+    let assignError = null;
+    if (!error && sellerId && sellerId !== session?.user?.id) {
+      const { data: upd, error: e2 } = await supabase
+        .from("orders")
+        .update({ seller_id: sellerId })
+        .eq("id", newId)
+        .select("id");
+      assignError = e2 || (!upd?.length && { message: "sin permiso para reasignar" });
+    }
+    if (assignError)
+      message({
+        message: `Pedido creado a tu nombre, pero no se pudo asignar al vendedor: ${assignError.message}`,
+      });
+    else message(error, "Orden generada correctamente");
     if (!error) {
       setTab("orders");
       await reload();
     }
     setBusy(false);
+  }
+  // Admin: asigna varios pedidos a un vendedor. Devuelve true si todos cambiaron.
+  async function assignSeller(orderIds, sellerId) {
+    if (!orderIds.length || !sellerId) return false;
+    setBusy(true);
+    const { data, error } = await supabase
+      .from("orders")
+      .update({ seller_id: sellerId })
+      .in("id", orderIds)
+      .select("id");
+    const done = data?.length || 0;
+    if (error) message(error);
+    else if (done < orderIds.length)
+      message({ message: `Solo se reasignaron ${done} de ${orderIds.length} pedidos.` });
+    else
+      message(null, done === 1 ? "Pedido reasignado" : `${done} pedidos reasignados`);
+    await reload();
+    setBusy(false);
+    return !error && done === orderIds.length;
   }
   async function createInvoice(orderId) {
     setBusy(true);
@@ -659,6 +694,19 @@ function App() {
     );
   // Los pedidos cancelados no cuentan en Resumen, Producción ni Facturación.
   const activeOrders = orders.filter((o) => !o.cancelled_at);
+  // Admin: usuarios activos que pueden figurar como vendedor de un pedido.
+  const sellerRoleIds = new Set(
+    roleCatalog
+      .filter((r) => ["seller", "admin", "sales_production"].includes(r.code))
+      .map((r) => r.id),
+  );
+  const sellerOptions = admin
+    ? sellers.filter(
+        (u) =>
+          u.active &&
+          assignments.some((a) => a.user_id === u.id && sellerRoleIds.has(a.role_id)),
+      )
+    : [];
   const counts = { pending: 0, in_progress: 0, finished: 0 };
   activeOrders.forEach((o) => o.order_items?.forEach((i) => counts[i.status]++));
   const initials =
@@ -829,6 +877,8 @@ function App() {
               orders={orders}
               pageSize={10}
               busy={busy}
+              sellerOptions={sellerOptions}
+              onAssignSeller={assignSeller}
               canBill={canBill}
               admin={admin}
               userId={session?.user?.id}
@@ -848,6 +898,8 @@ function App() {
           <Orders
             orders={visibleOrders}
             busy={busy}
+            sellerOptions={sellerOptions}
+            onAssignSeller={assignSeller}
             canBill={canBill}
             admin={admin}
             userId={session?.user?.id}
@@ -884,6 +936,8 @@ function App() {
             products={products.filter((p) => p.active)}
             zones={zones}
             busy={busy}
+            sellerOptions={sellerOptions}
+            meId={session?.user?.id}
             onSubmit={createOrder}
           />
         )}
@@ -1177,7 +1231,7 @@ function ProductCatalog({ products, inCart, onAdd, titleId, title = "Catálogo" 
     </>
   );
 }
-function OrderForm({ products, zones = [], busy, onSubmit }) {
+function OrderForm({ products, zones = [], busy, sellerOptions = [], meId, onSubmit }) {
   const [lines, setLines] = useState([]);
   const [zone, setZone] = useState("");
   const [payStatus, setPayStatus] = useState("pending");
@@ -1269,6 +1323,19 @@ function OrderForm({ products, zones = [], busy, onSubmit }) {
         <section className="panel" aria-labelledby="customer-title">
           <h2 id="customer-title">Datos del cliente</h2>
           <div className="stackfields">
+            {sellerOptions.length > 0 && (
+              <label>
+                Vendedor
+                <select name="seller_id" defaultValue={meId || ""}>
+                  {sellerOptions.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.full_name || u.username || "Sin nombre"}
+                      {u.id === meId ? " (yo)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label>
               Cliente
               <input
@@ -2395,8 +2462,22 @@ function AdminDashboard({ orders, zones = [], counts }) {
     </section>
   );
 }
-function Orders({ orders, busy, canBill, admin = false, userId, canSell, onEdit, onCancelOrder, products = [], zones = [], invoices = [], pageSize = 0 }) {
+function Orders({ orders, busy, canBill, admin = false, userId, canSell, onEdit, onCancelOrder, products = [], zones = [], invoices = [], pageSize = 0, sellerOptions = [], onAssignSeller }) {
   const [filter, setFilterState] = useState("all");
+  // Admin: selección para asignar vendedor en bloque.
+  const bulk = admin && !!onAssignSeller && sellerOptions.length > 0;
+  const [picked, setPicked] = useState(() => new Set());
+  const [bulkSeller, setBulkSeller] = useState("");
+  const togglePick = (id) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  async function applyBulk() {
+    const ok = await onAssignSeller([...picked], bulkSeller);
+    if (ok) setPicked(new Set());
+  }
   const [page, setPage] = useState(1);
   // Al cambiar el filtro se vuelve a la primera página.
   const setFilter = (v) => {
@@ -2466,12 +2547,70 @@ function Orders({ orders, busy, canBill, admin = false, userId, canSell, onEdit,
           {canSell && !orders.length ? "Aún no has generado pedidos." : "No hay pedidos para mostrar."}
         </div>
       )}
+      {bulk && filtered.length > 0 && (
+        <div className="panel bulkbar" role="group" aria-label="Asignar vendedor a varios pedidos">
+          <label className="bulk-all">
+            <input
+              type="checkbox"
+              checked={shown.length > 0 && shown.every((o) => picked.has(o.id))}
+              onChange={(e) =>
+                setPicked((prev) => {
+                  const next = new Set(prev);
+                  shown.forEach((o) => (e.target.checked ? next.add(o.id) : next.delete(o.id)));
+                  return next;
+                })
+              }
+            />
+            Seleccionar los de esta página
+          </label>
+          <span className="bulk-count" aria-live="polite">
+            {picked.size} {picked.size === 1 ? "seleccionado" : "seleccionados"}
+          </span>
+          <select
+            value={bulkSeller}
+            onChange={(e) => setBulkSeller(e.target.value)}
+            aria-label="Vendedor al que se asignan los pedidos"
+          >
+            <option value="">Asignar a…</option>
+            {sellerOptions.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.full_name || u.username || "Sin nombre"}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="compact"
+            disabled={busy || !picked.size || !bulkSeller}
+            onClick={applyBulk}
+          >
+            <UserRound size={15} aria-hidden="true" /> Asignar vendedor
+          </button>
+          {picked.size > 0 && (
+            <button type="button" className="linkbtn" disabled={busy} onClick={() => setPicked(new Set())}>
+              Quitar selección
+            </button>
+          )}
+        </div>
+      )}
       {pager}
       {shown.map((o) => (
-        <article className={"panel order" + (o.cancelled_at ? " cancelled" : "")} key={o.id}>
+        <article
+          className={"panel order" + (o.cancelled_at ? " cancelled" : "") + (picked.has(o.id) ? " picked" : "")}
+          key={o.id}
+        >
           <div className="orderhead">
             <div>
               <h2>
+                {bulk && (
+                  <input
+                    type="checkbox"
+                    className="orderpick"
+                    checked={picked.has(o.id)}
+                    onChange={() => togglePick(o.id)}
+                    aria-label={`Seleccionar pedido #${o.order_number}`}
+                  />
+                )}
                 Pedido #{o.order_number}
                 {o.cancelled_at && <span className="pill cancelled-pill">Cancelado</span>}
                 {o.wholesale && <span className="pill wholesale-pill">Precio mayorista</span>}
