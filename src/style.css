@@ -1914,3 +1914,126 @@ tr.is-inactive .plist-thumb { opacity: .55 }
   .ofilters-top .plist-new, .ofilters-top .secondary { flex: 1 1 auto; justify-content: center }
   .ofilters-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) }
 }
+
+/* ---------- Facturación: tabla + resumen en panel lateral ---------- */
+.billing > .okpis, .billing > .ochips { margin-bottom: 0 }
+.okpi-text strong.okpi-money { font-size: 1.45rem; white-space: nowrap }
+.btable tbody tr { cursor: pointer }
+.btable td.bsaldo { color: var(--primary); font-weight: 700 }
+.bactions { justify-content: flex-end; align-items: center; gap: 6px }
+.bactions .compact { white-space: nowrap; min-width: 132px; justify-content: center }
+/* Panel lateral ancho, por encima de la página (no estrecha la tabla) */
+.bdrawer-backdrop {
+    position: fixed; inset: 0; z-index: 80;
+    background: rgba(43, 29, 20, .28);
+    display: flex; justify-content: flex-end;
+    animation: bfade 160ms ease-out;
+}
+.bdrawer {
+    width: min(460px, 100%); height: 100%;
+    display: flex; flex-direction: column;
+    background: var(--surface);
+    box-shadow: -12px 0 32px rgba(43, 29, 20, .16);
+    animation: bslide 200ms ease-out;
+}
+.bdrawer-head { display: flex; align-items: center; gap: 12px; padding: 20px 24px; border-bottom: 1px solid var(--border) }
+.bdrawer-head h2 { margin: 0; flex: 1; font-size: 1.15rem }
+.bdrawer-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; background: var(--primary-soft); color: var(--brand-orange) }
+.bdrawer-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 24px; display: grid; align-content: start; gap: 24px }
+.bdrawer-order { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; border-radius: var(--radius); background: var(--surface-muted) }
+.bdrawer-order strong { display: block; font-size: 1.3rem }
+.bdrawer-order small { color: var(--text-muted) }
+.bdrawer-facts { margin: 0; display: grid; gap: 16px }
+.bdrawer-facts > div { display: grid; grid-template-columns: 130px 1fr; gap: 12px; align-items: start }
+.bdrawer-facts dt { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-weight: 600 }
+.bdrawer-facts dt svg { flex: none; color: var(--text-subtle) }
+.bdrawer-facts dd { margin: 0; display: grid; gap: 4px; justify-items: start; overflow-wrap: anywhere }
+.bdrawer-facts dd small { color: var(--text-muted) }
+.bdrawer-void { margin: 0; padding: 12px 14px; border-radius: var(--radius); background: var(--danger-bg); color: var(--danger); font-size: .9rem }
+.bdrawer-totals { display: grid; gap: 10px; padding-top: 20px; border-top: 1px solid var(--border); font-variant-numeric: tabular-nums }
+.bdrawer-totals > div { display: flex; justify-content: space-between; gap: 12px }
+.bdrawer-totals > div > span:first-child { color: var(--text-muted) }
+.bdrawer-totals .is-total { padding: 12px 14px; border-radius: var(--radius); background: var(--surface-muted); font-size: 1.15rem; font-weight: 700 }
+.bdrawer-totals .is-total > span:first-child { color: var(--text) }
+.bdrawer-totals .is-balance { padding: 0 14px; font-size: 1.1rem; font-weight: 700; color: var(--primary) }
+.bdrawer-foot { display: grid; gap: 10px; padding: 18px 24px 24px; border-top: 1px solid var(--border) }
+.bdrawer-foot button, .bdrawer-wa { min-height: 48px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100% }
+.bdrawer-wa {
+    border: 1px solid #9BD3AE; border-radius: var(--radius);
+    background: #EAF7EF; color: #17663A; font-weight: 600; text-decoration: none;
+}
+.bdrawer-wa:hover { background: #D8F0E1 }
+.bdrawer-wa:focus-visible { outline: 0; box-shadow: var(--focus) }
+.bdrawer-foot .fieldhelp { margin: 0; text-align: center }
+@keyframes bfade { from { opacity: 0 } }
+@keyframes bslide { from { transform: translateX(24px); opacity: .6 } }
+@media (prefers-reduced-motion: reduce) {
+    .bdrawer-backdrop, .bdrawer { animation: none }
+}
+@media (max-width: 760px) {
+    .bdrawer { width: 100% }
+    .bdrawer-facts > div { grid-template-columns: 1fr; gap: 4px }
+    .bactions .compact { min-width: 0 }
+}
+@media print {
+    .bdrawer-backdrop { display: none }
+}
+/* Facturación en móvil: tarjetas compactas, filtros plegables y lista */
+.bk-short, .bcards, .bfilters .bfilter-toggle, .ofilters-grid .bmobile-only { display: none }
+.bfilter-toggle { position: relative }
+.bfilter-dot { position: absolute; top: 6px; right: 6px; width: 9px; height: 9px; border-radius: 999px; background: var(--brand-orange); box-shadow: 0 0 0 2px var(--surface) }
+.bcards { list-style: none; margin: 0; padding: 0; gap: 10px }
+.bcard {
+    width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto 22px; align-items: center; gap: 10px;
+    padding: 14px 12px 14px 16px; text-align: left; font: inherit; color: var(--text);
+    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border-strong);
+    border-radius: var(--radius); box-shadow: var(--shadow-sm); cursor: pointer;
+    font-weight: 400; font-size: 1rem; min-height: 0;
+}
+.bcard:hover:not(:disabled) { background: var(--surface-muted); color: var(--text) }
+.bcard:focus-visible { outline: 0; box-shadow: var(--focus) }
+.bcard.is-ready, .bcard.is-paid { border-left-color: var(--success) }
+.bcard.is-producing { border-left-color: #7A5BB5 }
+.bcard.is-invoiced { border-left-color: var(--info) }
+.bcard.is-voided { border-left-color: var(--danger); opacity: .8 }
+.bcard-main { display: grid; gap: 4px; justify-items: start; min-width: 0 }
+.bcard-main b { font-size: 1.02rem; overflow-wrap: anywhere }
+.bcard-main small { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: .88rem }
+.bcard-main small svg { flex: none; color: var(--text-subtle) }
+.bcard-main .due { margin-top: 2px }
+.bcard-side { display: grid; gap: 8px; justify-items: end; text-align: right }
+.bcard-side strong { font-size: 1.12rem; font-variant-numeric: tabular-nums; white-space: nowrap }
+.bcard-go { color: var(--text-subtle) }
+@media (max-width: 760px) {
+    .billing { gap: 12px }
+    .bk-long, .billing .tablewrap, .bkpi-voided, .bchip-owed, .bchip-today { display: none }
+    .bk-short { display: inline }
+    .bcards { display: grid }
+    .ofilters-grid .bmobile-only { display: grid }
+    /* Tarjetas: 2 × 2 compactas */
+    .billing .okpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px }
+    .billing .okpis .okpi:first-child { grid-column: auto }
+    .billing .okpi { padding: 10px 12px; gap: 10px }
+    .billing .okpi-icon { width: 38px; height: 38px }
+    .billing .okpi-icon svg { width: 20px; height: 20px }
+    .billing .okpi-text strong { font-size: 1.3rem }
+    .billing .okpi-text strong.okpi-money { font-size: 1.05rem }
+    .billing .okpi-text small { font-size: .8rem }
+    /* Accesos: 3 del mismo ancho */
+    .bchips { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: visible; gap: 8px }
+    .bchips .ochip { justify-content: center; padding-left: 8px; padding-right: 8px; font-size: .88rem }
+    .bchips .ochip svg { display: none }
+    /* Buscador + botón de filtros; el resto se pliega */
+    .bfilters { padding: 0; background: transparent; border: 0; box-shadow: none }
+    .bfilters .ofilters-top { flex-wrap: nowrap; margin-bottom: 0; gap: 10px }
+    .bfilters .ofilters-top .plist-search { flex: 1 1 auto; min-width: 0 }
+    .bfilters .bfilter-toggle { display: inline-flex; flex: none; width: 48px; min-height: 48px; padding: 0; justify-content: center }
+    .bfilters .oclear, .bfilters .bexport, .bfilters .ofilters-grid { display: none }
+    .bfilters.is-open { padding: 12px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-sm) }
+    .bfilters.is-open .ofilters-top { flex-wrap: wrap; margin-bottom: 12px }
+    .bfilters.is-open .ofilters-top .plist-search { flex: 1 1 calc(100% - 58px) }
+    .bfilters.is-open .oclear, .bfilters.is-open .bexport { display: inline-flex; flex: 1 1 auto; justify-content: center }
+    .bfilters.is-open .ofilters-grid { display: grid }
+    /* Lista sin marco de tabla */
+    .billing .olist { padding: 0; background: transparent; border: 0; box-shadow: none }
+}

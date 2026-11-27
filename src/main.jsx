@@ -48,6 +48,11 @@ import {
   RotateCcw,
   TrendingUp,
   TrendingDown,
+  Ban,
+  Coins,
+  MessageCircle,
+  PanelRightOpen,
+  Filter,
 } from "lucide-react";
 import "./style.css";
 import { ThemeProvider, CssBaseline } from "@mui/material";
@@ -921,6 +926,12 @@ function App() {
             admin={admin}
             onCreate={createInvoice}
             onVoid={voidInvoice}
+            canBill={canBill}
+            canSell={canSell}
+            userId={session?.user?.id}
+            onEdit={updateOrder}
+            onCancelOrder={cancelOrder}
+            products={products}
           />
         )}
         {tab === "new" && canSell && (
@@ -4753,36 +4764,338 @@ function VoidInvoiceModal({ inv, onConfirm, onClose }) {
     </Modal>
   );
 }
-function Billing({ orders, invoices: allInvoices, zones, busy, admin = false, onCreate, onVoid }) {
+// ---------------------------------------------------------------------
+// Facturación: tarjetas y accesos rápidos (clic = filtro), buscador,
+// filtros, tabla paginada y resumen en un panel lateral ancho (encima de
+// la página, sin estrechar la tabla). Generar/anular siguen igual.
+// ---------------------------------------------------------------------
+const BILL_STATE = {
+  todo: ["Por facturar", "pay-pending"],
+  invoiced: ["Facturada", "pay-partial"],
+  paid: ["Pagada", "pay-paid"],
+  voided: ["Anulada", "cancelled-pill"],
+};
+const billStageLabel = (r) => (r.stage === "finished" ? "Listo para entregar" : STAGE_LABEL[r.stage]);
+// Enlace de WhatsApp con un resumen escrito; el usuario revisa y envía.
+function whatsappLink(r, doc) {
+  const digits = (r.customer_phone || "").replace(/\D/g, "");
+  if (digits.length < 10) return null;
+  const phone = digits.length === 10 ? "57" + digits : digits;
+  const lines = [
+    `Hola ${r.customer_name || ""}, te saluda Thian Candle.`,
+    `Resumen de tu pedido #${r.order_number}${r.inv && !r.inv.voided_at ? ` (factura ${fmtInvoice(r.inv.invoice_number)})` : ""}:`,
+    `Total: ${fmtMoney(doc.total)}`,
+    `Abonado: ${fmtMoney(doc.amount_paid || 0)}`,
+    `Saldo por pagar: ${fmtMoney(doc.balance || 0)}`,
+  ];
+  if (r.delivery_date)
+    lines.push(`Entrega: ${fmtDate(r.delivery_date)}${r.delivery_time ? " · " + fmtTime(r.delivery_time) : ""}`);
+  lines.push("¡Gracias por tu compra!");
+  return `https://wa.me/${phone}?text=${encodeURIComponent(lines.join("\n"))}`;
+}
+function BillingDrawer({ row, doc, busy, admin, canVoid, onClose, onGenerate, onOpenInvoice, onOpenOrder, onVoid }) {
+  const boxRef = useRef(null);
+  useEffect(() => {
+    const prev = document.activeElement;
+    boxRef.current?.querySelector("button")?.focus();
+    const onKey = (e) => e.key === "Escape" && !document.querySelector(".modal-backdrop") && onClose();
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      prev?.focus?.();
+    };
+  }, [row.key]);
+  const [label, cls] = BILL_STATE[row.kind];
+  const pay = row.order?.payment_status || (doc.balance > 0 ? "partial" : "paid");
+  const wa = whatsappLink(row, doc);
+  return (
+    <div className="bdrawer-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <section className="bdrawer" role="dialog" aria-modal="true" aria-labelledby="bdrawer-title" ref={boxRef}>
+        <header className="bdrawer-head">
+          <span className="bdrawer-icon" aria-hidden="true">
+            <FileText size={20} />
+          </span>
+          <h2 id="bdrawer-title">Resumen de facturación</h2>
+          <button type="button" className="iconbtn" onClick={onClose} aria-label="Cerrar resumen">
+            <X size={20} aria-hidden="true" />
+          </button>
+        </header>
+        <div className="bdrawer-body">
+          <div className="bdrawer-order">
+            <div>
+              <strong>Pedido #{row.order_number}</strong>
+              {row.inv && <small>{fmtInvoice(row.inv.invoice_number)}</small>}
+            </div>
+            <span className={"pill " + cls}>{label}</span>
+          </div>
+          <dl className="bdrawer-facts">
+            <div>
+              <dt><UserRound size={17} aria-hidden="true" /> Cliente</dt>
+              <dd>
+                {row.customer_name}
+                {row.customer_phone && <small>Tel. {row.customer_phone}</small>}
+              </dd>
+            </div>
+            <div>
+              <dt><Truck size={17} aria-hidden="true" /> Entrega</dt>
+              <dd>
+                {row.city ? `${row.city} · ${doc.delivery_fee ? fmtMoney(doc.delivery_fee) : "sin costo"}` : "Sin municipio"}
+                <small>
+                  {row.delivery_date ? fmtDate(row.delivery_date) : "Sin fecha"}
+                  {row.delivery_time && ` · ${fmtTime(row.delivery_time)}`}
+                </small>
+              </dd>
+            </div>
+            <div>
+              <dt><UserRound size={17} aria-hidden="true" /> Vendedor</dt>
+              <dd>{row.seller_name || "—"}</dd>
+            </div>
+            <div>
+              <dt><CreditCard size={17} aria-hidden="true" /> Pago</dt>
+              <dd>
+                <span className={"pill pay-" + pay}>{PAYMENT_STATUS[pay] || PAYMENT_STATUS.pending}</span>
+                {row.method && <small>{PAYMENT_METHOD[row.method]}</small>}
+              </dd>
+            </div>
+            <div>
+              <dt><Package size={17} aria-hidden="true" /> Pedido</dt>
+              <dd>
+                <span className={"pill stage-" + row.stage}>{billStageLabel(row)}</span>
+              </dd>
+            </div>
+          </dl>
+          {row.inv?.voided_at && (
+            <p className="bdrawer-void">
+              Anulada el {new Date(row.inv.voided_at).toLocaleDateString("es-CO")}
+              {row.inv.void_reason && ` · Motivo: ${row.inv.void_reason}`}
+            </p>
+          )}
+          <div className="bdrawer-totals">
+            <div><span>Productos</span><span>{fmtMoney(doc.subtotal)}</span></div>
+            <div><span>Domicilio</span><span>{fmtMoney(doc.delivery_fee || 0)}</span></div>
+            <div className="is-total"><span>Total</span><span>{fmtMoney(doc.total)}</span></div>
+            <div><span>Abonado</span><span>{fmtMoney(doc.amount_paid || 0)}</span></div>
+            <div className="is-balance"><span>Saldo</span><span>{fmtMoney(doc.balance || 0)}</span></div>
+          </div>
+        </div>
+        <footer className="bdrawer-foot">
+          {row.kind === "todo" ? (
+            <button type="button" className="bdrawer-main" disabled={busy} onClick={onGenerate}>
+              <Receipt size={18} aria-hidden="true" /> Generar factura
+            </button>
+          ) : (
+            <button type="button" className="bdrawer-main" onClick={onOpenInvoice}>
+              <FileText size={18} aria-hidden="true" /> Ver factura
+            </button>
+          )}
+          {row.order && (
+            <button type="button" className="secondary" onClick={onOpenOrder}>
+              <Package size={18} aria-hidden="true" /> Ver pedido
+            </button>
+          )}
+          {wa ? (
+            <a className="bdrawer-wa" href={wa} target="_blank" rel="noopener noreferrer">
+              <MessageCircle size={18} aria-hidden="true" /> Enviar por WhatsApp
+            </a>
+          ) : (
+            <span className="fieldhelp">Sin teléfono válido para WhatsApp.</span>
+          )}
+          {admin && canVoid && (
+            <button type="button" className="secondary dangerbtn" disabled={busy} onClick={onVoid}>
+              <Ban size={18} aria-hidden="true" /> Anular factura
+            </button>
+          )}
+        </footer>
+      </section>
+    </div>
+  );
+}
+function Billing({
+  orders,
+  invoices: allInvoices,
+  zones,
+  busy,
+  admin = false,
+  onCreate,
+  onVoid,
+  canBill,
+  canSell,
+  userId,
+  onEdit,
+  onCancelOrder,
+  products = [],
+}) {
+  const today = new Date().toLocaleDateString("en-CA");
+  const plusDays = (n) => {
+    const d = new Date();
+    d.setDate(d.getDate() + n);
+    return d.toLocaleDateString("en-CA");
+  };
   // Solo las facturas activas cuentan; las anuladas se listan aparte.
   const invoices = allInvoices.filter((x) => !x.voided_at);
   const voided = allInvoices.filter((x) => x.voided_at);
-  const [voidingId, setVoidingId] = useState(null);
-  const voiding = allInvoices.find((x) => x.id === voidingId);
-  const [view, setView] = useState("todo");
+  const invoiceOf = new Map(invoices.map((x) => [x.order_id, x]));
+  const orderOf = new Map(orders.map((o) => [o.id, o]));
+  const zoneName = new Map(zones.map((z) => [z.code, z.name]));
+  const empty = { stage: "", seller: "", delivery: "", zone: "", method: "" };
+  const [quick, setQuick] = useState("todo");
   const [query, setQuery] = useState("");
+  const [filters, setFilters] = useState(empty);
+  const [sort, setSort] = useState({ key: null, dir: "asc" });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [drawerKey, setDrawerKey] = useState(null);
+  const [voidingId, setVoidingId] = useState(null);
   const [previewId, setPreviewId] = useState(null);
   const [openInvoiceId, setOpenInvoiceId] = useState(null);
-  const invoiced = new Set(invoices.map((x) => x.order_id));
-  const q = query.trim().toLowerCase().replace("#", "");
-  const ready = (o) => (o.order_items || []).length > 0 && orderStage(o) === "finished";
-  const pending = orders
-    .filter((o) => !invoiced.has(o.id))
-    .sort(
-      (a, b) =>
-        Number(ready(b)) - Number(ready(a)) ||
-        (a.delivery_date || "9999-12-31").localeCompare(b.delivery_date || "9999-12-31"),
-    );
-  const match = (num, name) => !q || String(num).includes(q) || name?.toLowerCase().includes(q);
-  const pendingList = pending.filter((o) => match(o.order_number, o.customer_name));
-  const matchInv = (x) =>
-    match(x.order_number, x.customer_name) || fmtInvoice(x.invoice_number).toLowerCase().includes(q);
-  // Facturadas = activas; Anuladas = historial aparte.
-  const doneList = (view === "voided" ? voided : invoices).filter(matchInv);
-  const readyCount = pending.filter(ready).length;
-  const balance = invoices.reduce((s, x) => s + (x.balance || 0), 0);
+  const [orderId, setOrderId] = useState(null);
+  const voiding = allInvoices.find((x) => x.id === voidingId);
   const preview = orders.find((o) => o.id === previewId);
   const openInv = allInvoices.find((x) => x.id === openInvoiceId);
+  const orderView = orders.find((o) => o.id === orderId);
+  const base = (o, inv) => ({
+    order: o,
+    inv,
+    order_number: o?.order_number ?? inv?.order_number,
+    customer_name: o?.customer_name ?? inv?.customer_name,
+    customer_phone: o?.customer_phone ?? inv?.customer_phone,
+    seller_id: o?.seller_id || "",
+    seller_name: o?.seller_name || "",
+    delivery_date: o?.delivery_date ?? inv?.delivery_date,
+    delivery_time: o?.delivery_time ?? inv?.delivery_time,
+    zone: o?.delivery_zone || "",
+    city: o?.delivery_zone ? zoneName.get(o.delivery_zone) || o.delivery_zone : inv?.delivery_zone_name || "",
+    method: o?.payment_method || inv?.payment_method || "",
+    stage: o ? orderStage(o) : "cancelled",
+    ready: !!o && (o.order_items || []).length > 0 && orderStage(o) === "finished",
+  });
+  const rows = [
+    ...orders.map((o) => {
+      const inv = invoiceOf.get(o.id) || null;
+      const total = inv ? inv.total : orderGrandTotal(o);
+      const saldo = inv ? inv.balance || 0 : Math.max(orderGrandTotal(o) - (o.amount_paid || 0), 0);
+      return {
+        ...base(o, inv),
+        key: o.id,
+        kind: inv ? (saldo > 0 ? "invoiced" : "paid") : "todo",
+        total,
+        saldo,
+      };
+    }),
+    ...voided.map((inv) => ({
+      ...base(orderOf.get(inv.order_id) || null, inv),
+      key: "v-" + inv.id,
+      kind: "voided",
+      total: inv.total,
+      saldo: inv.balance || 0,
+    })),
+  ];
+  const QUICK = {
+    todo: (r) => r.kind === "todo",
+    ready: (r) => r.kind === "todo" && r.ready,
+    producing: (r) => r.kind === "todo" && !r.ready,
+    done: (r) => r.kind === "invoiced" || r.kind === "paid",
+    voided: (r) => r.kind === "voided",
+    owed: (r) => r.kind === "invoiced",
+    today: (r) => r.kind !== "voided" && r.delivery_date === today,
+  };
+  const count = (k) => rows.filter(QUICK[k]).length;
+  const balance = invoices.reduce((s, x) => s + (x.balance || 0), 0);
+  // [clave, etiqueta, etiqueta corta (móvil), icono, tono, valor]
+  const kpis = [
+    ["ready", "Listos para facturar", "Listos", CheckCircle2, "tone-success", count("ready")],
+    ["producing", "En producción", "En producción", Settings, "tone-info", count("producing")],
+    ["done", "Facturas", "Facturadas", FileText, "tone-brand", count("done")],
+    ["voided", "Anuladas", "Anuladas", Ban, "tone-danger", count("voided")],
+    ["owed", "Saldo por cobrar", "Saldo por cobrar", Coins, "tone-warning", fmtMoney(balance)],
+  ];
+  // En móvil solo se ven los tres primeros accesos (el resto, en filtros).
+  const chips = [
+    ["todo", "Por facturar", Receipt],
+    ["done", "Facturadas", CheckCircle2],
+    ["voided", "Anuladas", X],
+    ["owed", "Con saldo", Coins],
+    ["today", "Entrega hoy", Truck],
+  ];
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const activeFilters = Object.values(filters).filter(Boolean).length;
+  const cardTone = (r) => (r.kind === "todo" ? (r.ready ? "ready" : "producing") : r.kind);
+  // Filtros
+  const q = query.trim().toLowerCase();
+  const fx = filters;
+  const sellersInList = [
+    ...new Map(rows.filter((r) => r.seller_id).map((r) => [r.seller_id, r.seller_name || "—"])).entries(),
+  ].sort((a, b) => a[1].localeCompare(b[1], "es"));
+  const filtered = rows.filter(
+    (r) =>
+      QUICK[quick](r) &&
+      (!q ||
+        String(r.order_number).includes(q.replace("#", "")) ||
+        (r.customer_name || "").toLowerCase().includes(q) ||
+        (r.customer_phone || "").includes(q) ||
+        (r.inv && fmtInvoice(r.inv.invoice_number).toLowerCase().includes(q))) &&
+      (!fx.stage || r.stage === fx.stage) &&
+      (!fx.seller || r.seller_id === fx.seller) &&
+      (!fx.delivery ||
+        (fx.delivery === "today" && r.delivery_date === today) ||
+        (fx.delivery === "next7" && !!r.delivery_date && r.delivery_date >= today && r.delivery_date <= plusDays(7)) ||
+        (fx.delivery === "overdue" && !!r.delivery_date && r.delivery_date < today) ||
+        (fx.delivery === "none" && !r.delivery_date)) &&
+      (!fx.zone || (fx.zone === "__none" ? !r.zone : r.zone === fx.zone)) &&
+      (!fx.method || (fx.method === "__none" ? !r.method : r.method === fx.method)),
+  );
+  // Sin orden elegido: listos primero, luego por fecha de entrega.
+  const sorted = sort.key
+    ? sortRows(filtered, sort)
+    : [...filtered].sort(
+        (a, b) =>
+          Number(b.ready) - Number(a.ready) ||
+          (a.delivery_date || "9999-12-31").localeCompare(b.delivery_date || "9999-12-31") ||
+          b.order_number - a.order_number,
+      );
+  const total = sorted.length;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const current = Math.min(page, pages);
+  const from = total ? (current - 1) * pageSize + 1 : 0;
+  const to = Math.min(current * pageSize, total);
+  const visible = sorted.slice(from ? from - 1 : 0, to);
+  useEffect(() => setPage(1), [quick, query, filters, pageSize]);
+  const setF = (k, v) => setFilters((p) => ({ ...p, [k]: v }));
+  const dirty = quick !== "todo" || q || Object.values(fx).some(Boolean) || sort.key;
+  function clearAll() {
+    setQuick("todo");
+    setQuery("");
+    setFilters(empty);
+    setSort({ key: null, dir: "asc" });
+  }
+  function exportCsv() {
+    const head = ["Pedido", "Factura", "Cliente", "Teléfono", "Vendedor", "Entrega", "Ciudad", "Total", "Saldo", "Estado del pedido", "Estado factura"];
+    const lines = sorted.map((r) =>
+      [
+        r.order_number,
+        r.inv ? fmtInvoice(r.inv.invoice_number) : "",
+        r.customer_name,
+        r.customer_phone,
+        r.seller_name,
+        r.delivery_date,
+        r.city,
+        r.total,
+        r.saldo,
+        billStageLabel(r),
+        BILL_STATE[r.kind][0],
+      ]
+        .map(csvCell)
+        .join(";"),
+    );
+    const blob = new Blob(["﻿" + [head.join(";"), ...lines].join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `facturacion-${today}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
   async function generate() {
     const n = await onCreate(preview.id);
     if (n == null) {
@@ -4790,7 +5103,6 @@ function Billing({ orders, invoices: allInvoices, zones, busy, admin = false, on
       return;
     }
     setPreviewId(null);
-    setView("done");
   }
   // Al terminar de recargar, abre la factura recién generada
   const lastCreated = useRef(null);
@@ -4801,124 +5113,324 @@ function Billing({ orders, invoices: allInvoices, zones, busy, admin = false, on
       setOpenInvoiceId(inv.id);
       lastCreated.current = null;
     }
-  }, [invoices]);
+  }, [allInvoices]);
+  const drawerRow = rows.find((r) => r.key === drawerKey);
+  const drawerDoc = drawerRow && (drawerRow.inv || invoiceDraft(drawerRow.order, zones));
+  const stop = (fn) => (e) => {
+    e.stopPropagation();
+    fn();
+  };
+  const columns = [
+    ["order_number", "Pedido"],
+    ["customer_name", "Cliente"],
+    ["seller_name", "Vendedor"],
+    ["delivery_date", "Entrega"],
+    ["total", "Total", "num"],
+    ["saldo", "Saldo", "num"],
+  ];
   return (
     <div className="billing">
-      <div className="prod-stats">
-        <div className="pstat ps-finished"><span>Listos para facturar</span><b>{readyCount}</b></div>
-        <div className="pstat ps-in_progress"><span>En producción</span><b>{pending.length - readyCount}</b></div>
-        <div className="pstat"><span>Facturas</span><b>{invoices.length}</b></div>
-        <div className="pstat ps-pending"><span>Saldo por cobrar</span><b className="money">{fmtMoney(balance)}</b></div>
+      <div className="okpis">
+        {kpis.map(([k, label, short, Icon, tone, n]) => (
+          <button
+            type="button"
+            key={k}
+            className={"okpi bkpi-" + k + " " + tone + (quick === k ? " on" : "")}
+            aria-pressed={quick === k}
+            aria-label={`${label}: ${n}`}
+            onClick={() => setQuick(quick === k ? "todo" : k)}
+          >
+            <span className="okpi-icon" aria-hidden="true">
+              <Icon size={24} />
+            </span>
+            <span className="okpi-text" aria-hidden="true">
+              <small>
+                <span className="bk-long">{label}</span>
+                <span className="bk-short">{short}</span>
+              </small>
+              <strong className={k === "owed" ? "okpi-money" : ""}>{n}</strong>
+            </span>
+          </button>
+        ))}
       </div>
-      <div className="prod-tools">
-        <input
-          type="search"
-          className="prod-search"
-          placeholder="Buscar pedido, cliente o factura"
-          aria-label="Buscar pedido, cliente o factura"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <div className="chips" role="group" aria-label="Vista">
-          {[["todo", `Por facturar (${pending.length})`], ["done", `Facturadas (${invoices.length})`], ["voided", `Anuladas (${voided.length})`]].map(([v, l]) => (
-            <button key={v} type="button" className={"chip" + (view === v ? " active" : "")} aria-pressed={view === v} onClick={() => setView(v)}>
-              {l}
-            </button>
-          ))}
+      <div className="ochips bchips" role="group" aria-label="Accesos rápidos">
+        {chips.map(([k, label, Icon]) => (
+          <button
+            type="button"
+            key={k}
+            className={"ochip bchip-" + k + (quick === k ? " on" : "")}
+            aria-pressed={quick === k}
+            onClick={() => setQuick(k)}
+          >
+            <Icon size={16} aria-hidden="true" />
+            {label} ({count(k)})
+          </button>
+        ))}
+      </div>
+      <section className={"panel ofilters bfilters" + (filtersOpen ? " is-open" : "")}>
+        <div className="ofilters-top">
+          <label className="plist-search">
+            <Search size={18} aria-hidden="true" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Buscar pedido, cliente o factura…"
+              aria-label="Buscar por número de pedido, cliente, teléfono o factura"
+            />
+          </label>
+          <button
+            type="button"
+            className="secondary bfilter-toggle"
+            aria-expanded={filtersOpen}
+            aria-controls="bfilters-grid"
+            aria-label={`Filtros${activeFilters ? ` (${activeFilters} activos)` : ""}`}
+            onClick={() => setFiltersOpen((v) => !v)}
+          >
+            <Filter size={20} aria-hidden="true" />
+            {activeFilters > 0 && <span className="bfilter-dot" aria-hidden="true" />}
+          </button>
+          <button type="button" className="linkbtn oclear" disabled={!dirty} onClick={clearAll}>
+            <RotateCcw size={16} aria-hidden="true" /> Limpiar filtros
+          </button>
+          <button type="button" className="secondary bexport" disabled={!total} onClick={exportCsv}>
+            <Download size={16} aria-hidden="true" /> Exportar
+          </button>
         </div>
-      </div>
-
-      {view === "todo" && (
-        <div className="billlist">
-          {!pendingList.length && <div className="panel empty">No hay pedidos por facturar.</div>}
-          {pendingList.map((o) => {
-            const its = o.order_items || [];
-            const done = its.filter((i) => i.status === "finished").length;
-            const isReady = ready(o);
-            const zone = zones.find((z) => z.code === o.delivery_zone);
+        <div className="ofilters-grid" id="bfilters-grid">
+          <label className="bmobile-only">
+            Acceso rápido
+            <select value={quick} onChange={(e) => setQuick(e.target.value)}>
+              <option value="todo">Por facturar</option>
+              <option value="ready">Listos para facturar</option>
+              <option value="producing">En producción</option>
+              <option value="done">Facturadas</option>
+              <option value="voided">Anuladas</option>
+              <option value="owed">Con saldo</option>
+              <option value="today">Entrega hoy</option>
+            </select>
+          </label>
+          <label>
+            Estado del pedido
+            <select value={fx.stage} onChange={(e) => setF("stage", e.target.value)}>
+              <option value="">Todos</option>
+              <option value="finished">Listo para entregar</option>
+              <option value="in_progress">En producción</option>
+              <option value="pending">Pendiente</option>
+            </select>
+          </label>
+          {sellersInList.length > 1 && (
+            <label>
+              Vendedor
+              <select value={fx.seller} onChange={(e) => setF("seller", e.target.value)}>
+                <option value="">Todos</option>
+                {sellersInList.map(([id, name]) => (
+                  <option key={id} value={id}>{name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label>
+            Fecha de entrega
+            <select value={fx.delivery} onChange={(e) => setF("delivery", e.target.value)}>
+              <option value="">Cualquier fecha</option>
+              <option value="today">Hoy</option>
+              <option value="next7">Próximos 7 días</option>
+              <option value="overdue">Vencidas</option>
+              <option value="none">Sin fecha</option>
+            </select>
+          </label>
+          <label>
+            Ciudad
+            <select value={fx.zone} onChange={(e) => setF("zone", e.target.value)}>
+              <option value="">Todas</option>
+              {zones.map((z) => (
+                <option key={z.code} value={z.code}>{z.name}</option>
+              ))}
+              <option value="__none">Sin municipio</option>
+            </select>
+          </label>
+          <label>
+            Medio de pago
+            <select value={fx.method} onChange={(e) => setF("method", e.target.value)}>
+              <option value="">Todos</option>
+              {Object.entries(PAYMENT_METHOD).map(([v, l]) => (
+                <option key={v} value={v}>{l}</option>
+              ))}
+              <option value="__none">Sin pago</option>
+            </select>
+          </label>
+        </div>
+      </section>
+      <section className="panel olist">
+        <div className="tablewrap">
+          <table className="plist-table otable btable">
+            <thead>
+              <tr>
+                {columns.map(([key, label, cls]) => (
+                  <SortTh key={key} sortKey={key} label={label} className={cls} sort={sort} onSort={setSort} />
+                ))}
+                <th>Estado del pedido</th>
+                <th>Estado factura</th>
+                <th className="plist-actions-h">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((r) => {
+                const [label, cls] = BILL_STATE[r.kind];
+                return (
+                  <tr
+                    key={r.key}
+                    className={(drawerKey === r.key ? "is-current " : "") + (r.kind === "voided" ? "is-inactive" : "")}
+                    onClick={() => setDrawerKey(r.key)}
+                  >
+                    <td>
+                      <b className="onum">#{r.order_number}</b>
+                      <small className="plist-sku">{r.inv ? fmtInvoice(r.inv.invoice_number) : "—"}</small>
+                    </td>
+                    <td>
+                      <span className="ocust">{r.customer_name}</span>
+                      {r.customer_phone && <small className="plist-sku">{r.customer_phone}</small>}
+                    </td>
+                    <td>{r.seller_name || "—"}</td>
+                    <td className="onowrap">
+                      <DueChip order={r} done={r.kind !== "todo"} />
+                    </td>
+                    <td className="num plist-money">{fmtMoney(r.total)}</td>
+                    <td className={"num plist-money" + (r.saldo > 0 ? " bsaldo" : "")}>{fmtMoney(r.saldo)}</td>
+                    <td>
+                      <span className={"pill stage-" + r.stage}>{billStageLabel(r)}</span>
+                    </td>
+                    <td>
+                      <span className={"pill " + cls}>{label}</span>
+                    </td>
+                    <td>
+                      <div className="plist-actions bactions">
+                        {r.kind === "todo" ? (
+                          <button
+                            type="button"
+                            className={"compact" + (r.ready ? "" : " secondary")}
+                            disabled={busy}
+                            onClick={stop(() => setPreviewId(r.order.id))}
+                          >
+                            Generar factura
+                          </button>
+                        ) : (
+                          <button type="button" className="secondary compact" onClick={stop(() => setOpenInvoiceId(r.inv.id))}>
+                            <FileText size={15} aria-hidden="true" /> Ver factura
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="iconbtn photo"
+                          onClick={stop(() => setDrawerKey(r.key))}
+                          aria-label={`Resumen de facturación del pedido #${r.order_number}`}
+                          title="Resumen"
+                        >
+                          <PanelRightOpen size={18} aria-hidden="true" />
+                        </button>
+                        {admin && onVoid && (r.kind === "invoiced" || r.kind === "paid") && (
+                          <button
+                            type="button"
+                            className="iconbtn danger"
+                            disabled={busy}
+                            onClick={stop(() => setVoidingId(r.inv.id))}
+                            aria-label={`Anular factura ${fmtInvoice(r.inv.invoice_number)}`}
+                            title="Anular factura"
+                          >
+                            <Ban size={18} aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {!visible.length && (
+                <tr>
+                  <td colSpan={columns.length + 3} className="plist-empty">
+                    {quick === "voided"
+                      ? "No hay facturas anuladas."
+                      : quick === "todo" && !q && !Object.values(fx).some(Boolean)
+                        ? "No hay pedidos por facturar."
+                        : "Ningún pedido coincide con los filtros."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {/* Móvil: tarjetas en lugar de tabla; tocar abre el resumen. */}
+        <ul className="bcards" aria-label="Pedidos">
+          {visible.map((r) => {
+            const [label, cls] = BILL_STATE[r.kind];
             return (
-              <article key={o.id} className={"billrow" + (isReady ? " ready" : "")}>
-                <div className="br-main">
-                  <b>#{o.order_number} · {o.customer_name}</b>
-                  <small>
-                    <Truck size={13} aria-hidden="true" />{" "}
-                    {zone ? `${zone.name} · ${o.delivery_fee ? fmtMoney(o.delivery_fee) : "sin costo"}` : "Sin municipio"}
-                    {o.seller_name && ` · Vendedor: ${o.seller_name}`}
-                  </small>
-                </div>
-                <DueChip order={o} done={false} />
-                <span className={"pill " + (isReady ? "finished" : "in_progress")}>
-                  {isReady ? "Listo para entregar" : `Producción ${done} de ${its.length}`}
-                </span>
-                <div className="br-money">
-                  <b>{fmtMoney(orderGrandTotal(o))}</b>
-                  <small>Saldo {fmtMoney(Math.max(orderGrandTotal(o) - (o.amount_paid || 0), 0))}</small>
-                </div>
-                <button
-                  type="button"
-                  className={isReady ? "compact" : "secondary compact"}
-                  onClick={() => setPreviewId(o.id)}
-                >
-                  <Receipt size={15} aria-hidden="true" /> Generar factura
+              <li key={r.key}>
+                <button type="button" className={"bcard is-" + cardTone(r)} onClick={() => setDrawerKey(r.key)}>
+                  <span className="bcard-main">
+                    <b>#{r.order_number} · {r.customer_name}</b>
+                    <small>
+                      <MapPin size={15} aria-hidden="true" /> {r.city || "Sin municipio"}
+                    </small>
+                    <small>
+                      <UserRound size={15} aria-hidden="true" /> Vendedor: {r.seller_name || "—"}
+                    </small>
+                    <DueChip order={r} done={r.kind !== "todo"} />
+                  </span>
+                  <span className="bcard-side">
+                    <strong>{fmtMoney(r.total)}</strong>
+                    {r.kind === "todo" ? (
+                      <span className={"pill stage-" + r.stage}>{billStageLabel(r)}</span>
+                    ) : (
+                      <span className={"pill " + cls}>{label}</span>
+                    )}
+                  </span>
+                  <ChevronRight size={22} aria-hidden="true" className="bcard-go" />
                 </button>
-              </article>
+              </li>
             );
           })}
-        </div>
-      )}
+          {!visible.length && <li className="plist-empty">Ningún pedido coincide con los filtros.</li>}
+        </ul>
+        <footer className="plist-foot">
+          <span className="pager-info">
+            Mostrando {from} – {to} de {total}
+          </span>
+          <PageNav page={current} pages={pages} onPage={setPage} label="Paginación de facturación" />
+          <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} aria-label="Filas por página">
+            {[10, 25, 50].map((n) => (
+              <option key={n} value={n}>{n} por página</option>
+            ))}
+          </select>
+        </footer>
+      </section>
 
-      {(view === "done" || view === "voided") && (
-        <div className="billlist">
-          {!doneList.length && (
-            <div className="panel empty">
-              {view === "voided" ? "No hay facturas anuladas." : "Aún no hay facturas."}
-            </div>
-          )}
-          {doneList.map((x) => (
-            <article key={x.id} className={"billrow" + (x.voided_at ? " voided" : "")}>
-              <div className="br-main">
-                <b>{fmtInvoice(x.invoice_number)} · {x.customer_name}</b>
-                <small>
-                  Pedido #{x.order_number} · {new Date(x.created_at).toLocaleDateString("es-CO")}
-                  {x.delivery_zone_name && ` · ${x.delivery_zone_name}`}
-                </small>
-                {x.voided_at && (
-                  <small className="br-void">
-                    Anulada el {new Date(x.voided_at).toLocaleDateString("es-CO")}
-                    {x.void_reason && ` · ${x.void_reason}`}
-                  </small>
-                )}
-              </div>
-              {x.voided_at ? (
-                <span className="pill cancelled-pill">Anulada</span>
-              ) : (
-                <span className={"pill " + (x.balance > 0 ? "pay-partial" : "pay-paid")}>
-                  {x.balance > 0 ? `Saldo ${fmtMoney(x.balance)}` : "Pagada"}
-                </span>
-              )}
-              <div className="br-money">
-                <b>{fmtMoney(x.total)}</b>
-              </div>
-              <span className="br-actions">
-                <button type="button" className="secondary compact" onClick={() => setOpenInvoiceId(x.id)}>
-                  <Eye size={15} aria-hidden="true" /> Ver factura
-                </button>
-                {admin && onVoid && !x.voided_at && (
-                  <button
-                    type="button"
-                    className="secondary compact dangerbtn"
-                    disabled={busy}
-                    onClick={() => setVoidingId(x.id)}
-                  >
-                    <X size={15} aria-hidden="true" /> Anular
-                  </button>
-                )}
-              </span>
-            </article>
-          ))}
-        </div>
+      {drawerRow && (
+        <BillingDrawer
+          row={drawerRow}
+          doc={drawerDoc}
+          busy={busy}
+          admin={admin}
+          canVoid={!!onVoid && (drawerRow.kind === "invoiced" || drawerRow.kind === "paid")}
+          onClose={() => setDrawerKey(null)}
+          onGenerate={() => {
+            setDrawerKey(null);
+            setPreviewId(drawerRow.order.id);
+          }}
+          onOpenInvoice={() => {
+            setDrawerKey(null);
+            setOpenInvoiceId(drawerRow.inv.id);
+          }}
+          onOpenOrder={() => {
+            setDrawerKey(null);
+            setOrderId(drawerRow.order.id);
+          }}
+          onVoid={() => {
+            setDrawerKey(null);
+            setVoidingId(drawerRow.inv.id);
+          }}
+        />
       )}
-
       {preview && (
         <InvoiceModal
           inv={invoiceDraft(preview, zones)}
@@ -4927,7 +5439,7 @@ function Billing({ orders, invoices: allInvoices, zones, busy, admin = false, on
           actions={
             <>
               <span className="fieldhelp">
-                {ready(preview)
+                {(preview.order_items || []).length > 0 && orderStage(preview) === "finished"
                   ? "Al generarla se asigna el consecutivo y ya no se pueden cambiar productos ni domicilio."
                   : "Ojo: este pedido aún tiene productos sin finalizar."}
               </span>
@@ -4973,6 +5485,24 @@ function Billing({ orders, invoices: allInvoices, zones, busy, admin = false, on
             </>
           }
         />
+      )}
+      {orderView && (
+        <Modal title={`Pedido #${orderView.order_number}`} onClose={() => setOrderId(null)}>
+          <Orders
+            bare
+            orders={[orderView]}
+            busy={busy}
+            canBill={canBill}
+            admin={admin}
+            userId={userId}
+            canSell={canSell}
+            onEdit={onEdit}
+            onCancelOrder={onCancelOrder}
+            products={products}
+            zones={zones}
+            invoices={allInvoices}
+          />
+        </Modal>
       )}
     </div>
   );
