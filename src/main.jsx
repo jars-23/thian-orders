@@ -2872,9 +2872,22 @@ function OrdersBoard({
   const [sort, setSort] = useState({ key: null, dir: "asc" });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const [quickId, setQuickId] = useState(null);
   const [full, setFull] = useState(null); // { id, action }
-  const [menuId, setMenuId] = useState(null);
+  // Menú ⋯: se pinta en <body> con posición fija para quedar por delante
+  // de la tabla (el contenedor con scroll lo recortaba).
+  const [menu, setMenu] = useState(null); // { id, top, right }
+  const menuId = menu?.id || null;
+  const setMenuId = (id) => setMenu(id ? menu : null);
+  function openMenu(e, id) {
+    if (menuId === id) return setMenu(null);
+    const r = e.currentTarget.getBoundingClientRect();
+    const below = window.innerHeight - r.bottom > 180;
+    setMenu({
+      id,
+      right: Math.max(8, window.innerWidth - r.right),
+      ...(below ? { top: r.bottom + 4 } : { bottom: window.innerHeight - r.top + 4 }),
+    });
+  }
   const [picked, setPicked] = useState(() => new Set());
   const [bulkSeller, setBulkSeller] = useState("");
   const bulk = admin && !!onAssignSeller && sellerOptions.length > 0;
@@ -3005,20 +3018,24 @@ function OrdersBoard({
   }
   useEffect(() => {
     if (!menuId) return;
-    const close = (e) => !e.target.closest?.(".omenu") && setMenuId(null);
-    const esc = (e) => e.key === "Escape" && setMenuId(null);
+    const close = (e) => !e.target.closest?.(".omenu, .omenu-list") && setMenu(null);
+    const esc = (e) => e.key === "Escape" && setMenu(null);
+    const away = () => setMenu(null);
     document.addEventListener("click", close);
     document.addEventListener("keydown", esc);
+    window.addEventListener("resize", away);
+    window.addEventListener("scroll", away, true);
     return () => {
       document.removeEventListener("click", close);
       document.removeEventListener("keydown", esc);
+      window.removeEventListener("resize", away);
+      window.removeEventListener("scroll", away, true);
     };
   }, [menuId]);
   async function applyBulk() {
     const ok = await onAssignSeller([...picked], bulkSeller);
     if (ok) setPicked(new Set());
   }
-  const quickOrder = rows.find((r) => r.id === quickId);
   const fullOrder = full && orders.find((o) => o.id === full.id);
   const columns = [
     ["order_number", "Pedido"],
@@ -3030,7 +3047,7 @@ function OrdersBoard({
   ];
   const colCount = columns.length + 3 + (bulk ? 1 : 0);
   return (
-    <div className={"oboard" + (quickOrder ? " has-quick" : "")}>
+    <div className="oboard">
       <div className="oboard-main">
         <div className="okpis">
           {kpis.map(([k, label, Icon, tone, n]) => (
@@ -3209,7 +3226,7 @@ function OrdersBoard({
                 {visible.map((r) => (
                   <tr
                     key={r.id}
-                    className={(quickId === r.id ? "is-current " : "") + (r.stage === "cancelled" ? "is-inactive" : "")}
+                    className={(menuId === r.id ? "is-current " : "") + (r.stage === "cancelled" ? "is-inactive" : "")}
                   >
                     {bulk && (
                       <td className="ocheck">
@@ -3259,16 +3276,6 @@ function OrdersBoard({
                     </td>
                     <td>
                       <div className="plist-actions">
-                        <button
-                          type="button"
-                          className="iconbtn"
-                          onClick={() => setQuickId(quickId === r.id ? null : r.id)}
-                          aria-label={`Detalle rápido del pedido #${r.order_number}`}
-                          aria-pressed={quickId === r.id}
-                          title="Detalle rápido"
-                        >
-                          <Eye size={18} aria-hidden="true" />
-                        </button>
                         <span className="omenu">
                           <button
                             type="button"
@@ -3276,12 +3283,16 @@ function OrdersBoard({
                             aria-haspopup="menu"
                             aria-expanded={menuId === r.id}
                             aria-label={`Más acciones del pedido #${r.order_number}`}
-                            onClick={() => setMenuId(menuId === r.id ? null : r.id)}
+                            onClick={(e) => openMenu(e, r.id)}
                           >
                             <MoreHorizontal size={18} aria-hidden="true" />
                           </button>
-                          {menuId === r.id && (
-                            <span className="omenu-list" role="menu">
+                          {menuId === r.id && createPortal(
+                            <span
+                              className="omenu-list"
+                              role="menu"
+                              style={{ top: menu.top, bottom: menu.bottom, right: menu.right }}
+                            >
                               <button type="button" role="menuitem" onClick={() => { setMenuId(null); setFull({ id: r.id }); }}>
                                 <Eye size={15} aria-hidden="true" /> Ver pedido completo
                               </button>
@@ -3295,7 +3306,8 @@ function OrdersBoard({
                                   <X size={15} aria-hidden="true" /> Cancelar pedido
                                 </button>
                               )}
-                            </span>
+                            </span>,
+                            document.body,
                           )}
                         </span>
                       </div>
@@ -3325,61 +3337,6 @@ function OrdersBoard({
           </footer>
         </section>
       </div>
-      {quickOrder && (
-        <section className="panel oquick" aria-label={`Detalle rápido del pedido #${quickOrder.order_number}`}>
-          <header className="oquick-head">
-            <span className="oquick-title">
-              <Package size={20} aria-hidden="true" /> Detalle rápido del pedido
-            </span>
-            <button type="button" className="iconbtn" onClick={() => setQuickId(null)} aria-label="Cerrar detalle rápido">
-              <X size={18} aria-hidden="true" />
-            </button>
-          </header>
-          <h3>
-            Pedido #{quickOrder.order_number}
-            {quickOrder.invoice && (
-              <span className="pill invoiced-pill">Facturado {fmtInvoice(quickOrder.invoice.invoice_number)}</span>
-            )}
-            {quickOrder.stage === "cancelled" && <span className="pill cancelled-pill">Cancelado</span>}
-          </h3>
-          <dl className="oquick-facts">
-            <div><dt><UserRound size={16} aria-hidden="true" /> Cliente:</dt><dd>{quickOrder.customer_name}{quickOrder.customer_phone && ` · ${quickOrder.customer_phone}`}</dd></div>
-            <div><dt><Users size={16} aria-hidden="true" /> Vendedor:</dt><dd>{quickOrder.seller_name || "—"}</dd></div>
-            <div><dt><CalendarDays size={16} aria-hidden="true" /> Entrega:</dt><dd>{fmtDate(quickOrder.delivery_date)}{quickOrder.delivery_time && ` · ${fmtTime(quickOrder.delivery_time)}`}</dd></div>
-            <div><dt><MapPin size={16} aria-hidden="true" /> Dirección:</dt><dd>{quickOrder.delivery_address || "—"}{quickOrder.city && ` · ${quickOrder.city}`}</dd></div>
-            <div><dt><CreditCard size={16} aria-hidden="true" /> Pago:</dt><dd><span className={"pill pay-" + (quickOrder.payment_status || "pending")}>{PAYMENT_STATUS[quickOrder.payment_status] || PAYMENT_STATUS.pending}</span></dd></div>
-          </dl>
-          <div className="oquick-items">
-            <div className="oquick-items-head">
-              <span>Productos ({(quickOrder.order_items || []).length})</span>
-              <span>Subtotal</span>
-            </div>
-            {(quickOrder.order_items || []).map((i) => (
-              <div className="oquick-item" key={i.id}>
-                <span className="plist-thumb" aria-hidden="true">
-                  {i.products?.image_url ? <img src={i.products.image_url} alt="" width="52" height="52" loading="lazy" /> : <Package size={18} />}
-                </span>
-                <span className="oquick-name">{i.products?.name || "Producto"}</span>
-                <span className="oquick-qty">x{i.quantity}</span>
-                <b>{i.unit_price == null ? "—" : fmtMoney(i.unit_price * i.quantity)}</b>
-              </div>
-            ))}
-            {quickOrder.delivery_zone && (
-              <div className="oquick-fee">
-                <span>Domicilio – {quickOrder.city}</span>
-                <span>{quickOrder.delivery_fee ? fmtMoney(quickOrder.delivery_fee) : "Sin costo"}</span>
-              </div>
-            )}
-          </div>
-          <div className="oquick-total">
-            <span>Total del pedido</span>
-            <b>{fmtMoney(quickOrder.total)}</b>
-          </div>
-          <button type="button" className="secondary oquick-full" onClick={() => setFull({ id: quickOrder.id })}>
-            <Eye size={16} aria-hidden="true" /> Ver pedido completo
-          </button>
-        </section>
-      )}
       {fullOrder && (
         <Modal title={`Pedido #${fullOrder.order_number}`} onClose={() => setFull(null)}>
           <Orders
