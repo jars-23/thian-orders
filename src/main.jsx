@@ -2466,7 +2466,7 @@ const orderCanCancel = (o, { canBill, canSell, userId, invoiced }) =>
     (canSell &&
       o.seller_id === userId &&
       (o.order_items || []).every((i) => i.status === "pending")));
-function Orders({ orders, busy, canBill, admin = false, userId, canSell, onEdit, onCancelOrder, products = [], zones = [], invoices = [], pageSize = 0, sellerOptions = [], onAssignSeller, bare = false, initialAction = null }) {
+function Orders({ orders, busy, canBill, admin = false, userId, canSell, onEdit, onCancelOrder, products = [], zones = [], invoices = [], pageSize = 0, sellerOptions = [], onAssignSeller, bare = false }) {
   const [filter, setFilterState] = useState("all");
   // Admin: selección para asignar vendedor en bloque.
   const bulk = admin && !!onAssignSeller && sellerOptions.length > 0;
@@ -2498,13 +2498,6 @@ function Orders({ orders, busy, canBill, admin = false, userId, canSell, onEdit,
   const canCancel = (o) =>
     !!onCancelOrder &&
     orderCanCancel(o, { canBill, canSell, userId, invoiced: invoiceOf.has(o.id) });
-  // Modo detalle (bare): abrir directamente Editar o Cancelar.
-  useEffect(() => {
-    const o = orders[0];
-    if (!bare || !o) return;
-    if (initialAction === "edit" && canEdit(o)) setEditingId(o.id);
-    if (initialAction === "cancel" && canCancel(o)) setCancellingId(o.id);
-  }, []);
   const filtered = orders.filter((o) =>
     filter === "all"
       ? true
@@ -3309,11 +3302,30 @@ function OrdersBoard({
           </footer>
         </section>
       </div>
-      {fullOrder && (
+      {/* Editar (icono ✏️): solo el formulario; al guardar o cancelar se cierra. */}
+      {fullOrder && full.action === "edit" && (
+        <Modal title={`Editar pedido #${fullOrder.order_number}`} onClose={() => setFull(null)}>
+          <OrderEditForm
+            order={fullOrder}
+            products={products}
+            zones={zones}
+            invoiced={invoiceOf.has(fullOrder.id)}
+            canBill={canBill}
+            admin={admin}
+            onSave={onEdit}
+            onCancel={() => setFull(null)}
+          />
+        </Modal>
+      )}
+      {/* Cancelar (icono 🗑): solo la ventana del motivo. */}
+      {fullOrder && full.action === "cancel" && (
+        <CancelOrderModal order={fullOrder} onConfirm={onCancelOrder} onClose={() => setFull(null)} />
+      )}
+      {/* Ver pedido completo (icono 📄). */}
+      {fullOrder && !full.action && (
         <Modal title={`Pedido #${fullOrder.order_number}`} onClose={() => setFull(null)}>
           <Orders
             bare
-            initialAction={full.action || null}
             orders={[fullOrder]}
             busy={busy}
             canBill={canBill}
