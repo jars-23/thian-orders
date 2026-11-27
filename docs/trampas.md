@@ -56,3 +56,8 @@ Formato: **síntoma · causa · solución** (3 líneas). Ver [[arquitectura]] y 
 - **Síntoma:** un panel nuevo sale con fondo marrón oscuro y texto apagado.
 - **Causa:** `src/style.css:165` da estilo a `aside` (la barra lateral) por etiqueta, no por clase.
 - **Solución:** no usar `<aside>` en contenido; usar `<div>`/`<section>` con clase propia.
+
+## T12 · El hover global de los botones gana a las reglas de clase
+- **Síntoma:** un botón con estilo propio (tarjeta, chip, icono) se pone naranja al pasar el ratón.
+- **Causa:** `button:hover:not(:disabled)` (`src/style.css:91`) pesa (0,2,1); `.miclase:hover` solo (0,2,0).
+- **Solución:** escribir `.miclase:hover:not(:disabled)`. Ojo: `.iconbtn` ya existe (botón quitar del carrito, hover rojo); acotar con el contenedor (`.plist-actions .iconbtn`).

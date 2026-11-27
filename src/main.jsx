@@ -41,6 +41,13 @@ import {
   Calculator,
   ChevronDown,
   ChevronUp,
+  CreditCard,
+  Download,
+  MapPin,
+  MoreHorizontal,
+  RotateCcw,
+  TrendingUp,
+  TrendingDown,
 } from "lucide-react";
 import "./style.css";
 import { ThemeProvider, CssBaseline } from "@mui/material";
@@ -173,7 +180,8 @@ function App() {
   // En Pedidos, quien vende (incluido el Administrador) ve solo los pedidos
   // que generó. Facturación y Supervisor siguen viendo todos; Producción y el
   // Resumen general trabajan con todos los pedidos.
-  const visibleOrders = canSell
+  // Decisión 2026-11-26: el Administrador ve todos los pedidos en Pedidos.
+  const visibleOrders = canSell && !admin
     ? orders.filter((o) => o.seller_id === session?.user?.id)
     : orders;
   const message = (err, ok) => {
@@ -872,30 +880,14 @@ function App() {
         {tab === "dashboard" && admin && (
           <>
             <AdminDashboard orders={orders} zones={zones} counts={counts} />
-            <h2 className="dash-title">Todos los pedidos</h2>
-            <Orders
-              orders={orders}
-              pageSize={10}
-              busy={busy}
-              sellerOptions={sellerOptions}
-              onAssignSeller={assignSeller}
-              canBill={canBill}
-              admin={admin}
-              userId={session?.user?.id}
-              canSell={canSell}
-              onEdit={updateOrder}
-              onCancelOrder={cancelOrder}
-              products={products}
-              zones={zones}
-              invoices={invoices}
-            />
           </>
         )}
         {tab === "production" && seesProduction && (
           <Production orders={activeOrders} onStatus={setItemStatus} />
         )}
         {tab === "orders" && (
-          <Orders
+          <OrdersBoard
+            onNew={() => setTab("new")}
             orders={visibleOrders}
             busy={busy}
             sellerOptions={sellerOptions}
@@ -2462,7 +2454,19 @@ function AdminDashboard({ orders, zones = [], counts }) {
     </section>
   );
 }
-function Orders({ orders, busy, canBill, admin = false, userId, canSell, onEdit, onCancelOrder, products = [], zones = [], invoices = [], pageSize = 0, sellerOptions = [], onAssignSeller }) {
+// Debe coincidir con update_order (SQL).
+const orderCanEdit = (o, { canBill, canSell, userId }) =>
+  !o.cancelled_at && (canBill || (canSell && o.seller_id === userId));
+// Debe coincidir con cancel_order (SQL): admin y Facturación siempre; el
+// vendedor dueño solo si todo sigue pendiente. Un pedido facturado no se cancela aquí.
+const orderCanCancel = (o, { canBill, canSell, userId, invoiced }) =>
+  !o.cancelled_at &&
+  !invoiced &&
+  (canBill ||
+    (canSell &&
+      o.seller_id === userId &&
+      (o.order_items || []).every((i) => i.status === "pending")));
+function Orders({ orders, busy, canBill, admin = false, userId, canSell, onEdit, onCancelOrder, products = [], zones = [], invoices = [], pageSize = 0, sellerOptions = [], onAssignSeller, bare = false, initialAction = null }) {
   const [filter, setFilterState] = useState("all");
   // Admin: selección para asignar vendedor en bloque.
   const bulk = admin && !!onAssignSeller && sellerOptions.length > 0;
@@ -2490,18 +2494,17 @@ function Orders({ orders, busy, canBill, admin = false, userId, canSell, onEdit,
   const zoneName = new Map(zones.map((z) => [z.code, z.name]));
   // Solo cuenta la factura activa (las anuladas no bloquean el pedido).
   const invoiceOf = new Map(invoices.filter((x) => !x.voided_at).map((x) => [x.order_id, x]));
-  // Debe coincidir con update_order (SQL).
-  const canEdit = (o) => !o.cancelled_at && (canBill || (canSell && o.seller_id === userId));
-  // Debe coincidir con cancel_order (SQL): admin y Facturación siempre; el
-  // vendedor dueño solo si todo sigue pendiente. Un pedido facturado no se cancela aquí.
+  const canEdit = (o) => orderCanEdit(o, { canBill, canSell, userId });
   const canCancel = (o) =>
     !!onCancelOrder &&
-    !o.cancelled_at &&
-    !invoiceOf.has(o.id) &&
-    (canBill ||
-      (canSell &&
-        o.seller_id === userId &&
-        (o.order_items || []).every((i) => i.status === "pending")));
+    orderCanCancel(o, { canBill, canSell, userId, invoiced: invoiceOf.has(o.id) });
+  // Modo detalle (bare): abrir directamente Editar o Cancelar.
+  useEffect(() => {
+    const o = orders[0];
+    if (!bare || !o) return;
+    if (initialAction === "edit" && canEdit(o)) setEditingId(o.id);
+    if (initialAction === "cancel" && canCancel(o)) setCancellingId(o.id);
+  }, []);
   const filtered = orders.filter((o) =>
     filter === "all"
       ? true
@@ -2528,6 +2531,7 @@ function Orders({ orders, busy, canBill, admin = false, userId, canSell, onEdit,
     ) : null;
   return (
     <>
+      {!bare && (
       <div className="filter">
         <label>
           Filtrar por estado{" "}
@@ -2542,12 +2546,13 @@ function Orders({ orders, busy, canBill, admin = false, userId, canSell, onEdit,
           </select>
         </label>
       </div>
-      {!filtered.length && (
+      )}
+      {!bare && !filtered.length && (
         <div className="panel">
           {canSell && !orders.length ? "Aún no has generado pedidos." : "No hay pedidos para mostrar."}
         </div>
       )}
-      {bulk && filtered.length > 0 && (
+      {!bare && bulk && filtered.length > 0 && (
         <div className="panel bulkbar" role="group" aria-label="Asignar vendedor a varios pedidos">
           <label className="bulk-all">
             <input
@@ -2602,7 +2607,7 @@ function Orders({ orders, busy, canBill, admin = false, userId, canSell, onEdit,
           <div className="orderhead">
             <div>
               <h2>
-                {bulk && (
+                {!bare && bulk && (
                   <input
                     type="checkbox"
                     className="orderpick"
@@ -2793,6 +2798,608 @@ function Orders({ orders, busy, canBill, admin = false, userId, canSell, onEdit,
         />
       )}
     </>
+  );
+}
+// Paginación numerada (1 … 4 5 6 … 15).
+function PageNav({ page, pages, onPage, label = "Paginación" }) {
+  return (
+    <nav className="plist-pages" aria-label={label}>
+      <button type="button" className="pagebtn" disabled={page <= 1} onClick={() => onPage(page - 1)} aria-label="Página anterior">
+        <ChevronLeft size={18} aria-hidden="true" />
+      </button>
+      {Array.from({ length: pages }, (_, i) => i + 1)
+        .filter((n) => n === 1 || n === pages || Math.abs(n - page) <= 1)
+        .map((n, i, arr) => (
+          <React.Fragment key={n}>
+            {i > 0 && n - arr[i - 1] > 1 && <span className="pagegap">…</span>}
+            <button
+              type="button"
+              className={"pagebtn" + (n === page ? " on" : "")}
+              aria-current={n === page ? "page" : undefined}
+              onClick={() => onPage(n)}
+            >
+              {n}
+            </button>
+          </React.Fragment>
+        ))}
+      <button type="button" className="pagebtn" disabled={page >= pages} onClick={() => onPage(page + 1)} aria-label="Página siguiente">
+        <ChevronRight size={18} aria-hidden="true" />
+      </button>
+    </nav>
+  );
+}
+const STAGE_LABEL = {
+  pending: "Pendiente",
+  in_progress: "En producción",
+  finished: "Finalizado",
+  cancelled: "Cancelado",
+};
+const csvCell = (v) => {
+  const t = v == null ? "" : String(v);
+  return /[";\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+};
+// ---------------------------------------------------------------------
+// Pedidos: tarjetas (clic = filtro), accesos rápidos, buscador, filtros,
+// tabla paginada, panel de detalle rápido y ventana con el pedido completo
+// (reutiliza Orders en modo "bare": editar, cancelar, pagos, fotos).
+// ---------------------------------------------------------------------
+function OrdersBoard({
+  orders,
+  busy,
+  canBill,
+  admin = false,
+  userId,
+  canSell,
+  onEdit,
+  onCancelOrder,
+  onNew,
+  products = [],
+  zones = [],
+  invoices = [],
+  sellerOptions = [],
+  onAssignSeller,
+}) {
+  const today = new Date().toLocaleDateString("en-CA");
+  const plusDays = (n) => {
+    const d = new Date();
+    d.setDate(d.getDate() + n);
+    return d.toLocaleDateString("en-CA");
+  };
+  const empty = { stage: "", seller: "", created: "", delivery: "", zone: "", method: "" };
+  const [quick, setQuick] = useState("all");
+  const [query, setQuery] = useState("");
+  const [filters, setFilters] = useState(empty);
+  const [sort, setSort] = useState({ key: null, dir: "asc" });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [quickId, setQuickId] = useState(null);
+  const [full, setFull] = useState(null); // { id, action }
+  const [menuId, setMenuId] = useState(null);
+  const [picked, setPicked] = useState(() => new Set());
+  const [bulkSeller, setBulkSeller] = useState("");
+  const bulk = admin && !!onAssignSeller && sellerOptions.length > 0;
+  const zoneName = new Map(zones.map((z) => [z.code, z.name]));
+  const invoiceOf = new Map(invoices.filter((x) => !x.voided_at).map((x) => [x.order_id, x]));
+  const perms = { canBill, canSell, userId };
+  const rows = orders.map((o) => ({
+    ...o,
+    stage: o.cancelled_at ? "cancelled" : orderStage(o),
+    total: orderGrandTotal(o),
+    invoice: invoiceOf.get(o.id) || null,
+    city: o.delivery_zone ? zoneName.get(o.delivery_zone) || o.delivery_zone : "",
+    createdDay: new Date(o.created_at).toLocaleDateString("en-CA"),
+  }));
+  const live = rows.filter((r) => r.stage !== "cancelled");
+  // Tarjetas
+  const monthKey = today.slice(0, 7);
+  const prev = new Date();
+  prev.setDate(1);
+  prev.setMonth(prev.getMonth() - 1);
+  const prevKey = prev.toLocaleDateString("en-CA").slice(0, 7);
+  const thisMonth = live.filter((r) => r.createdDay.startsWith(monthKey)).length;
+  const lastMonth = live.filter((r) => r.createdDay.startsWith(prevKey)).length;
+  const trend = lastMonth ? Math.round(((thisMonth - lastMonth) / lastMonth) * 100) : null;
+  const QUICK = {
+    all: () => true,
+    today: (r) => r.createdDay === today,
+    pending: (r) => r.stage === "pending",
+    in_progress: (r) => r.stage === "in_progress",
+    finished: (r) => r.stage === "finished",
+    unpaid: (r) => r.stage !== "cancelled" && r.payment_status !== "paid",
+    invoiced: (r) => !!r.invoice,
+    upcoming: (r) =>
+      r.stage !== "cancelled" &&
+      r.stage !== "finished" &&
+      !!r.delivery_date &&
+      r.delivery_date >= today &&
+      r.delivery_date <= plusDays(7),
+  };
+  const count = (k) => rows.filter(QUICK[k]).length;
+  const kpis = [
+    ["all", "Total pedidos", Package, "tone-brand", live.length],
+    ["pending", "Pendientes", Clock, "tone-warning", count("pending")],
+    ["in_progress", "En producción", Settings, "tone-info", count("in_progress")],
+    ["finished", "Finalizados", CheckCircle2, "tone-success", count("finished")],
+    ["unpaid", "Pago pendiente", CreditCard, "tone-danger", count("unpaid")],
+  ];
+  const chips = [
+    ["all", "Todos", null, rows.length],
+    ["today", "Hoy", CalendarDays, count("today")],
+    ["pending", "Pendientes", null, count("pending")],
+    ["invoiced", "Facturados", Receipt, count("invoiced")],
+    ["upcoming", "Entregas próximas", Truck, count("upcoming")],
+  ];
+  // Filtros
+  const q = query.trim().toLowerCase();
+  const fx = filters;
+  const sellersInList = [...new Map(rows.map((r) => [r.seller_id, r.seller_name || "—"])).entries()].sort(
+    (a, b) => a[1].localeCompare(b[1], "es"),
+  );
+  const filtered = rows.filter(
+    (r) =>
+      QUICK[quick](r) &&
+      (!q ||
+        String(r.order_number).includes(q.replace("#", "")) ||
+        (r.customer_name || "").toLowerCase().includes(q) ||
+        (r.customer_phone || "").includes(q) ||
+        (r.delivery_address || "").toLowerCase().includes(q) ||
+        (r.invoice && fmtInvoice(r.invoice.invoice_number).toLowerCase().includes(q))) &&
+      (!fx.stage || r.stage === fx.stage) &&
+      (!fx.seller || r.seller_id === fx.seller) &&
+      (!fx.created ||
+        (fx.created === "today" && r.createdDay === today) ||
+        (fx.created === "7d" && r.createdDay >= plusDays(-6)) ||
+        (fx.created === "month" && r.createdDay.startsWith(monthKey))) &&
+      (!fx.delivery ||
+        (fx.delivery === "next7" && !!r.delivery_date && r.delivery_date >= today && r.delivery_date <= plusDays(7)) ||
+        (fx.delivery === "overdue" && !!r.delivery_date && r.delivery_date < today && r.stage !== "finished" && r.stage !== "cancelled") ||
+        (fx.delivery === "none" && !r.delivery_date)) &&
+      (!fx.zone || (fx.zone === "__none" ? !r.delivery_zone : r.delivery_zone === fx.zone)) &&
+      (!fx.method || (fx.method === "__none" ? !r.payment_method : r.payment_method === fx.method)),
+  );
+  const sorted = sort.key ? sortRows(filtered, sort) : [...filtered].sort((a, b) => b.order_number - a.order_number);
+  const total = sorted.length;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const current = Math.min(page, pages);
+  const from = total ? (current - 1) * pageSize + 1 : 0;
+  const to = Math.min(current * pageSize, total);
+  const visible = sorted.slice(from ? from - 1 : 0, to);
+  useEffect(() => setPage(1), [quick, query, filters, pageSize]);
+  const setF = (k, v) => setFilters((p) => ({ ...p, [k]: v }));
+  const dirty = quick !== "all" || q || Object.values(fx).some(Boolean) || sort.key;
+  function clearAll() {
+    setQuick("all");
+    setQuery("");
+    setFilters(empty);
+    setSort({ key: null, dir: "asc" });
+  }
+  function exportCsv() {
+    const head = ["Pedido", "Factura", "Cliente", "Teléfono", "Vendedor", "Creado", "Entrega", "Ciudad", "Dirección", "Total", "Pago", "Medio de pago", "Estado"];
+    const lines = sorted.map((r) =>
+      [
+        r.order_number,
+        r.invoice ? fmtInvoice(r.invoice.invoice_number) : "",
+        r.customer_name,
+        r.customer_phone,
+        r.seller_name,
+        r.createdDay,
+        r.delivery_date,
+        r.city,
+        r.delivery_address,
+        r.total,
+        PAYMENT_STATUS[r.payment_status] || PAYMENT_STATUS.pending,
+        PAYMENT_METHOD[r.payment_method] || "",
+        STAGE_LABEL[r.stage],
+      ]
+        .map(csvCell)
+        .join(";"),
+    );
+    const blob = new Blob(["\ufeff" + [head.join(";"), ...lines].join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `pedidos-${today}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  useEffect(() => {
+    if (!menuId) return;
+    const close = (e) => !e.target.closest?.(".omenu") && setMenuId(null);
+    const esc = (e) => e.key === "Escape" && setMenuId(null);
+    document.addEventListener("click", close);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("click", close);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [menuId]);
+  async function applyBulk() {
+    const ok = await onAssignSeller([...picked], bulkSeller);
+    if (ok) setPicked(new Set());
+  }
+  const quickOrder = rows.find((r) => r.id === quickId);
+  const fullOrder = full && orders.find((o) => o.id === full.id);
+  const columns = [
+    ["order_number", "Pedido"],
+    ["customer_name", "Cliente"],
+    ["seller_name", "Vendedor"],
+    ["delivery_date", "Fecha entrega"],
+    ["city", "Ciudad"],
+    ["total", "Total", "num"],
+  ];
+  const colCount = columns.length + 3 + (bulk ? 1 : 0);
+  return (
+    <div className={"oboard" + (quickOrder ? " has-quick" : "")}>
+      <div className="oboard-main">
+        <div className="okpis">
+          {kpis.map(([k, label, Icon, tone, n]) => (
+            <button
+              type="button"
+              key={k}
+              className={"okpi " + tone + (quick === k ? " on" : "")}
+              aria-pressed={quick === k}
+              onClick={() => setQuick(quick === k && k !== "all" ? "all" : k)}
+            >
+              <span className="okpi-icon" aria-hidden="true">
+                <Icon size={24} />
+              </span>
+              <span className="okpi-text">
+                <small>{label}</small>
+                <strong>{n}</strong>
+                {k === "all" && trend != null && (
+                  <em className={trend >= 0 ? "up" : "down"}>
+                    {trend >= 0 ? <TrendingUp size={14} aria-hidden="true" /> : <TrendingDown size={14} aria-hidden="true" />}
+                    {trend >= 0 ? "+" : ""}
+                    {trend}% vs. mes anterior
+                  </em>
+                )}
+              </span>
+            </button>
+          ))}
+        </div>
+        <div className="ochips" role="group" aria-label="Accesos rápidos">
+          {chips.map(([k, label, Icon, n]) => (
+            <button
+              type="button"
+              key={k}
+              className={"ochip" + (quick === k ? " on" : "")}
+              aria-pressed={quick === k}
+              onClick={() => setQuick(k)}
+            >
+              {Icon ? <Icon size={16} aria-hidden="true" /> : k === "pending" ? <span className="dot" aria-hidden="true" /> : null}
+              {label} ({n})
+            </button>
+          ))}
+        </div>
+        <section className="panel ofilters">
+          <div className="ofilters-top">
+            <label className="plist-search">
+              <Search size={18} aria-hidden="true" />
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Buscar por cliente, pedido o dirección…"
+                aria-label="Buscar por cliente, número de pedido, factura o dirección"
+              />
+            </label>
+            <button type="button" className="linkbtn oclear" disabled={!dirty} onClick={clearAll}>
+              <RotateCcw size={16} aria-hidden="true" /> Limpiar filtros
+            </button>
+            <button type="button" className="secondary" disabled={!total} onClick={exportCsv}>
+              <Download size={16} aria-hidden="true" /> Exportar
+            </button>
+            {canSell && onNew && (
+              <button type="button" className="plist-new" onClick={onNew}>
+                <Plus size={20} aria-hidden="true" /> Nuevo pedido
+              </button>
+            )}
+          </div>
+          <div className="ofilters-grid">
+            <label>
+              Estado
+              <select value={fx.stage} onChange={(e) => setF("stage", e.target.value)}>
+                <option value="">Todos</option>
+                {Object.entries(STAGE_LABEL).map(([v, l]) => (
+                  <option key={v} value={v}>{l}</option>
+                ))}
+              </select>
+            </label>
+            {sellersInList.length > 1 && (
+              <label>
+                Vendedor
+                <select value={fx.seller} onChange={(e) => setF("seller", e.target.value)}>
+                  <option value="">Todos</option>
+                  {sellersInList.map(([id, name]) => (
+                    <option key={id} value={id}>{name}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <label>
+              Fecha (creación)
+              <select value={fx.created} onChange={(e) => setF("created", e.target.value)}>
+                <option value="">Todas las fechas</option>
+                <option value="today">Hoy</option>
+                <option value="7d">Últimos 7 días</option>
+                <option value="month">Este mes</option>
+              </select>
+            </label>
+            <label>
+              Entrega
+              <select value={fx.delivery} onChange={(e) => setF("delivery", e.target.value)}>
+                <option value="">Todas</option>
+                <option value="next7">Próximos 7 días</option>
+                <option value="overdue">Vencidas sin finalizar</option>
+                <option value="none">Sin fecha</option>
+              </select>
+            </label>
+            <label>
+              Ciudad
+              <select value={fx.zone} onChange={(e) => setF("zone", e.target.value)}>
+                <option value="">Todas</option>
+                {zones.map((z) => (
+                  <option key={z.code} value={z.code}>{z.name}</option>
+                ))}
+                <option value="__none">Sin municipio</option>
+              </select>
+            </label>
+            <label>
+              Medio de pago
+              <select value={fx.method} onChange={(e) => setF("method", e.target.value)}>
+                <option value="">Todos</option>
+                {Object.entries(PAYMENT_METHOD).map(([v, l]) => (
+                  <option key={v} value={v}>{l}</option>
+                ))}
+                <option value="__none">Sin pago</option>
+              </select>
+            </label>
+          </div>
+        </section>
+        {bulk && picked.size > 0 && (
+          <div className="panel bulkbar" role="group" aria-label="Asignar vendedor a varios pedidos">
+            <span className="bulk-count" aria-live="polite">
+              {picked.size} {picked.size === 1 ? "seleccionado" : "seleccionados"}
+            </span>
+            <select value={bulkSeller} onChange={(e) => setBulkSeller(e.target.value)} aria-label="Vendedor al que se asignan los pedidos">
+              <option value="">Asignar a…</option>
+              {sellerOptions.map((u) => (
+                <option key={u.id} value={u.id}>{u.full_name || u.username || "Sin nombre"}</option>
+              ))}
+            </select>
+            <button type="button" className="compact" disabled={busy || !bulkSeller} onClick={applyBulk}>
+              <UserRound size={15} aria-hidden="true" /> Asignar vendedor
+            </button>
+            <button type="button" className="linkbtn" disabled={busy} onClick={() => setPicked(new Set())}>
+              Quitar selección
+            </button>
+          </div>
+        )}
+        <section className="panel olist">
+          <div className="tablewrap">
+            <table className="plist-table otable">
+              <thead>
+                <tr>
+                  {bulk && (
+                    <th className="ocheck">
+                      <input
+                        type="checkbox"
+                        aria-label="Seleccionar los pedidos de esta página"
+                        checked={visible.length > 0 && visible.every((r) => picked.has(r.id))}
+                        onChange={(e) =>
+                          setPicked((prev) => {
+                            const next = new Set(prev);
+                            visible.forEach((r) => (e.target.checked ? next.add(r.id) : next.delete(r.id)));
+                            return next;
+                          })
+                        }
+                      />
+                    </th>
+                  )}
+                  {columns.map(([key, label, cls]) => (
+                    <SortTh key={key} sortKey={key} label={label} className={cls} sort={sort} onSort={setSort} />
+                  ))}
+                  <th>Pago</th>
+                  <th>Estado</th>
+                  <th className="plist-actions-h">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((r) => (
+                  <tr
+                    key={r.id}
+                    className={(quickId === r.id ? "is-current " : "") + (r.stage === "cancelled" ? "is-inactive" : "")}
+                  >
+                    {bulk && (
+                      <td className="ocheck">
+                        <input
+                          type="checkbox"
+                          checked={picked.has(r.id)}
+                          onChange={() =>
+                            setPicked((prev) => {
+                              const next = new Set(prev);
+                              next.has(r.id) ? next.delete(r.id) : next.add(r.id);
+                              return next;
+                            })
+                          }
+                          aria-label={`Seleccionar pedido #${r.order_number}`}
+                        />
+                      </td>
+                    )}
+                    <td>
+                      <b className="onum">#{r.order_number}</b>
+                      <small className="plist-sku">{r.invoice ? fmtInvoice(r.invoice.invoice_number) : "—"}</small>
+                    </td>
+                    <td>
+                      <span className="ocust">{r.customer_name}</span>
+                      {r.customer_phone && <small className="plist-sku">{r.customer_phone}</small>}
+                    </td>
+                    <td>{r.seller_name || "—"}</td>
+                    <td className="onowrap">
+                      <CalendarDays size={15} aria-hidden="true" className="omuted" /> {r.delivery_date ? fmtDate(r.delivery_date) : "Sin fecha"}
+                    </td>
+                    <td className="onowrap">
+                      {r.city ? (
+                        <>
+                          <MapPin size={15} aria-hidden="true" className="omuted" /> {r.city}
+                        </>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="num plist-money">{fmtMoney(r.total)}</td>
+                    <td>
+                      <span className={"pill pay-" + (r.payment_status || "pending")}>
+                        {PAYMENT_STATUS[r.payment_status] || PAYMENT_STATUS.pending}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={"pill stage-" + r.stage}>{STAGE_LABEL[r.stage]}</span>
+                    </td>
+                    <td>
+                      <div className="plist-actions">
+                        <button
+                          type="button"
+                          className="iconbtn"
+                          onClick={() => setQuickId(quickId === r.id ? null : r.id)}
+                          aria-label={`Detalle rápido del pedido #${r.order_number}`}
+                          aria-pressed={quickId === r.id}
+                          title="Detalle rápido"
+                        >
+                          <Eye size={18} aria-hidden="true" />
+                        </button>
+                        <span className="omenu">
+                          <button
+                            type="button"
+                            className="iconbtn"
+                            aria-haspopup="menu"
+                            aria-expanded={menuId === r.id}
+                            aria-label={`Más acciones del pedido #${r.order_number}`}
+                            onClick={() => setMenuId(menuId === r.id ? null : r.id)}
+                          >
+                            <MoreHorizontal size={18} aria-hidden="true" />
+                          </button>
+                          {menuId === r.id && (
+                            <span className="omenu-list" role="menu">
+                              <button type="button" role="menuitem" onClick={() => { setMenuId(null); setFull({ id: r.id }); }}>
+                                <Eye size={15} aria-hidden="true" /> Ver pedido completo
+                              </button>
+                              {orderCanEdit(r, perms) && (
+                                <button type="button" role="menuitem" onClick={() => { setMenuId(null); setFull({ id: r.id, action: "edit" }); }}>
+                                  <Pencil size={15} aria-hidden="true" /> Editar
+                                </button>
+                              )}
+                              {onCancelOrder && orderCanCancel(r, { ...perms, invoiced: !!r.invoice }) && (
+                                <button type="button" role="menuitem" className="danger" onClick={() => { setMenuId(null); setFull({ id: r.id, action: "cancel" }); }}>
+                                  <X size={15} aria-hidden="true" /> Cancelar pedido
+                                </button>
+                              )}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {!visible.length && (
+                  <tr>
+                    <td colSpan={colCount} className="plist-empty">
+                      {orders.length ? "Ningún pedido coincide con los filtros." : canSell ? "Aún no has generado pedidos." : "No hay pedidos para mostrar."}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <footer className="plist-foot">
+            <span className="pager-info">
+              Mostrando {from} – {to} de {total} pedidos
+            </span>
+            <PageNav page={current} pages={pages} onPage={setPage} label="Paginación de pedidos" />
+            <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} aria-label="Pedidos por página">
+              {[10, 25, 50].map((n) => (
+                <option key={n} value={n}>{n} por página</option>
+              ))}
+            </select>
+          </footer>
+        </section>
+      </div>
+      {quickOrder && (
+        <aside className="panel oquick" aria-label={`Detalle rápido del pedido #${quickOrder.order_number}`}>
+          <header className="oquick-head">
+            <span className="oquick-title">
+              <Package size={20} aria-hidden="true" /> Detalle rápido del pedido
+            </span>
+            <button type="button" className="iconbtn" onClick={() => setQuickId(null)} aria-label="Cerrar detalle rápido">
+              <X size={18} aria-hidden="true" />
+            </button>
+          </header>
+          <h3>
+            Pedido #{quickOrder.order_number}
+            {quickOrder.invoice && (
+              <span className="pill invoiced-pill">Facturado {fmtInvoice(quickOrder.invoice.invoice_number)}</span>
+            )}
+            {quickOrder.stage === "cancelled" && <span className="pill cancelled-pill">Cancelado</span>}
+          </h3>
+          <dl className="oquick-facts">
+            <div><dt><UserRound size={16} aria-hidden="true" /> Cliente:</dt><dd>{quickOrder.customer_name}{quickOrder.customer_phone && ` · ${quickOrder.customer_phone}`}</dd></div>
+            <div><dt><Users size={16} aria-hidden="true" /> Vendedor:</dt><dd>{quickOrder.seller_name || "—"}</dd></div>
+            <div><dt><CalendarDays size={16} aria-hidden="true" /> Entrega:</dt><dd>{fmtDate(quickOrder.delivery_date)}{quickOrder.delivery_time && ` · ${fmtTime(quickOrder.delivery_time)}`}</dd></div>
+            <div><dt><MapPin size={16} aria-hidden="true" /> Dirección:</dt><dd>{quickOrder.delivery_address || "—"}{quickOrder.city && ` · ${quickOrder.city}`}</dd></div>
+            <div><dt><CreditCard size={16} aria-hidden="true" /> Pago:</dt><dd><span className={"pill pay-" + (quickOrder.payment_status || "pending")}>{PAYMENT_STATUS[quickOrder.payment_status] || PAYMENT_STATUS.pending}</span></dd></div>
+          </dl>
+          <div className="oquick-items">
+            <div className="oquick-items-head">
+              <span>Productos ({(quickOrder.order_items || []).length})</span>
+              <span>Subtotal</span>
+            </div>
+            {(quickOrder.order_items || []).map((i) => (
+              <div className="oquick-item" key={i.id}>
+                <span className="plist-thumb" aria-hidden="true">
+                  {i.products?.image_url ? <img src={i.products.image_url} alt="" width="52" height="52" loading="lazy" /> : <Package size={18} />}
+                </span>
+                <span className="oquick-name">{i.products?.name || "Producto"}</span>
+                <span className="oquick-qty">x{i.quantity}</span>
+                <b>{i.unit_price == null ? "—" : fmtMoney(i.unit_price * i.quantity)}</b>
+              </div>
+            ))}
+            {quickOrder.delivery_zone && (
+              <div className="oquick-fee">
+                <span>Domicilio – {quickOrder.city}</span>
+                <span>{quickOrder.delivery_fee ? fmtMoney(quickOrder.delivery_fee) : "Sin costo"}</span>
+              </div>
+            )}
+          </div>
+          <div className="oquick-total">
+            <span>Total del pedido</span>
+            <b>{fmtMoney(quickOrder.total)}</b>
+          </div>
+          <button type="button" className="secondary oquick-full" onClick={() => setFull({ id: quickOrder.id })}>
+            <Eye size={16} aria-hidden="true" /> Ver pedido completo
+          </button>
+        </aside>
+      )}
+      {fullOrder && (
+        <Modal title={`Pedido #${fullOrder.order_number}`} onClose={() => setFull(null)}>
+          <Orders
+            bare
+            initialAction={full.action || null}
+            orders={[fullOrder]}
+            busy={busy}
+            canBill={canBill}
+            admin={admin}
+            userId={userId}
+            canSell={canSell}
+            onEdit={onEdit}
+            onCancelOrder={onCancelOrder}
+            products={products}
+            zones={zones}
+            invoices={invoices}
+          />
+        </Modal>
+      )}
+    </div>
   );
 }
 // Ventana para cancelar un pedido: pide el motivo (obligatorio).

@@ -839,7 +839,7 @@ tbody tr:last-child td { border-bottom: 0 }
     background: transparent;
     color: var(--text-muted);
 }
-.iconbtn:hover:not(:disabled) { background: var(--danger-bg); color: var(--danger) }
+.iconbtn:hover { background: var(--danger-bg); color: var(--danger) }
 
 .cartline-bottom {
     display: flex;
@@ -1760,7 +1760,7 @@ tr.is-inactive .plist-thumb { opacity: .55 }
 .iconbtn.photo { color: var(--info) }
 .iconbtn.danger { color: var(--danger) }
 .iconbtn.ok { color: var(--success) }
-.iconbtn:hover { background: var(--surface-muted) }
+.plist-actions .iconbtn:hover:not(:disabled), .oquick-head .iconbtn:hover:not(:disabled) { background: var(--surface-muted) }
 .iconbtn:focus-visible, .iconbtn:focus-within { box-shadow: var(--focus); outline: 0 }
 .iconbtn:disabled, .iconbtn.is-disabled { opacity: .45; cursor: not-allowed }
 .plist-empty { text-align: center; color: var(--text-muted); padding: 28px 12px }
@@ -1841,4 +1841,114 @@ tr.is-inactive .plist-thumb { opacity: .55 }
 .panel.order.picked { box-shadow: 0 0 0 2px var(--primary) }
 @media (max-width: 760px) {
   .bulkbar select, .bulkbar button { width: 100% }
+}
+
+/* ---------- Pedidos (tablero) ---------- */
+.oboard { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start }
+.oboard.has-quick { grid-template-columns: minmax(0, 1fr) minmax(320px, 380px) }
+.oboard-main { min-width: 0 }
+.okpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; margin-bottom: 16px }
+.okpi {
+  display: flex; align-items: center; gap: 14px; min-width: 0; padding: 16px 18px; text-align: left;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm); cursor: pointer; transition: box-shadow var(--ease), border-color var(--ease);
+}
+.okpi:hover:not(:disabled) { border-color: var(--border-strong); box-shadow: var(--shadow); background: var(--surface) }
+.okpi:focus-visible { outline: 0; box-shadow: var(--focus) }
+.okpi.on { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary) }
+.okpi-icon { display: grid; place-items: center; flex: none; width: 52px; height: 52px; border-radius: 999px; background: var(--primary-soft); color: var(--brand-orange) }
+.okpi.tone-warning .okpi-icon { background: var(--warning-bg); color: var(--warning) }
+.okpi.tone-info .okpi-icon { background: var(--info-bg); color: var(--info) }
+.okpi.tone-success .okpi-icon { background: var(--success-bg); color: var(--success) }
+.okpi.tone-danger .okpi-icon { background: var(--danger-bg); color: var(--danger) }
+.okpi-text { display: grid; gap: 2px; min-width: 0 }
+.okpi-text small { font-size: .9rem; color: var(--text-muted); font-weight: 600 }
+.okpi-text strong { font-size: 1.7rem; line-height: 1.1; font-variant-numeric: tabular-nums }
+.okpi-text em { display: inline-flex; align-items: center; gap: 4px; font-style: normal; font-size: .78rem; color: var(--text-muted) }
+.okpi-text em.up svg { color: var(--success) }
+.okpi-text em.down svg { color: var(--danger) }
+.ochips { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px }
+.ochip {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 18px; border-radius: 999px;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border); font-weight: 600; cursor: pointer;
+}
+.ochip:hover:not(:disabled) { border-color: var(--border-strong); background: var(--surface) }
+.ochip.on, .ochip.on:hover:not(:disabled) { background: var(--brand-orange); border-color: var(--brand-orange); color: #fff }
+.ochip .dot { width: 9px; height: 9px; border-radius: 999px; background: var(--primary) }
+.ochip.on .dot { background: #fff }
+.ochip:focus-visible { outline: 0; box-shadow: var(--focus) }
+.ofilters { padding: 16px 18px }
+.ofilters-top { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 14px }
+.ofilters-top .plist-search { flex: 1 1 320px }
+.ofilters-top .secondary { min-height: 46px; display: inline-flex; align-items: center; gap: 8px }
+.oclear { display: inline-flex; align-items: center; gap: 6px; font-weight: 600 }
+.ofilters-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px }
+.ofilters-grid label { display: grid; gap: 6px; font-size: .88rem; font-weight: 600; color: var(--text) }
+.ofilters-grid select { min-height: 44px; border-radius: var(--radius) }
+.olist { padding: 8px 16px 12px }
+.otable td { padding-top: 12px; padding-bottom: 12px }
+.otable tbody tr:hover td { background: var(--surface-muted) }
+.otable tr.is-current td { background: var(--primary-soft) }
+.ocheck { width: 36px }
+.ocheck input { width: 18px; height: 18px; accent-color: var(--primary); cursor: pointer }
+.onum { display: block; font-size: 1rem }
+.ocust { display: block; font-weight: 500 }
+.onowrap { white-space: nowrap }
+.omuted { color: var(--text-subtle); vertical-align: -2px }
+.pill.stage-pending { background: var(--neutral-bg); color: var(--neutral) }
+.pill.stage-in_progress { background: #ECE4FA; color: #553A8C }
+.pill.stage-finished { background: var(--success-bg); color: var(--success) }
+.pill.stage-cancelled { background: var(--danger-bg); color: var(--danger) }
+.omenu { position: relative; display: inline-block }
+.omenu-list {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; display: grid; min-width: 200px; padding: 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.omenu-list button {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px; border: 0; border-radius: var(--radius-sm);
+  background: transparent; color: var(--text); text-align: left; font-weight: 500; cursor: pointer; min-height: 40px;
+}
+.omenu-list button:hover, .omenu-list button:focus-visible { background: var(--surface-muted); outline: 0 }
+.omenu-list button.danger { color: var(--danger) }
+.oquick { position: sticky; top: 16px; padding: 0; margin-bottom: 0; max-height: calc(100dvh - 32px); overflow-y: auto }
+.oquick-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; background: var(--surface-muted); border-bottom: 1px solid var(--border) }
+.oquick-title { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.05rem; color: var(--brand-brown) }
+.oquick-title svg { color: var(--brand-orange) }
+.oquick h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 16px 16px 8px; font-size: 1.35rem }
+.oquick-facts { display: grid; gap: 10px; margin: 0; padding: 4px 16px 16px }
+.oquick-facts div { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline }
+.oquick-facts dt { display: inline-flex; align-items: center; gap: 8px; font-weight: 700 }
+.oquick-facts dt svg { color: var(--text-muted); align-self: center }
+.oquick-facts dd { margin: 0; color: var(--text-muted) }
+.oquick-items { margin: 0 12px; border-top: 1px solid var(--border) }
+.oquick-items-head { display: flex; justify-content: space-between; padding: 10px 4px; font-weight: 700; font-size: .9rem }
+.oquick-item { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 8px 4px; border-top: 1px solid var(--border) }
+.oquick-item .plist-thumb { width: 52px; height: 52px }
+.oquick-name { font-size: .9rem; overflow-wrap: anywhere }
+.oquick-qty { color: var(--text-muted); font-variant-numeric: tabular-nums }
+.oquick-item b { font-variant-numeric: tabular-nums }
+.oquick-fee { display: flex; justify-content: space-between; gap: 10px; padding: 12px 4px; border-top: 1px solid var(--border); color: var(--text-muted) }
+.oquick-total { display: flex; justify-content: space-between; align-items: center; margin: 8px 12px; padding: 14px 16px; border-radius: var(--radius); background: var(--primary-soft); font-weight: 700 }
+.oquick-total b { font-size: 1.3rem; color: var(--primary) }
+.oquick-full { display: flex; align-items: center; justify-content: center; gap: 8px; width: calc(100% - 24px); margin: 4px 12px 16px; min-height: 46px }
+@media (max-width: 1280px) {
+  .okpis { grid-template-columns: repeat(3, minmax(0, 1fr)) }
+}
+@media (max-width: 1100px) {
+  .oboard.has-quick { grid-template-columns: minmax(0, 1fr) }
+  .oquick {
+    position: fixed; z-index: 60; left: 0; right: 0; bottom: 0; top: auto; max-height: 85dvh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0; box-shadow: 0 -12px 40px rgba(0, 0, 0, .25);
+  }
+}
+@media (max-width: 760px) {
+  .okpis { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+  .okpis .okpi:first-child { grid-column: 1 / -1 }
+  .okpi { padding: 12px 14px }
+  .okpi-icon { width: 42px; height: 42px }
+  .okpi-text strong { font-size: 1.4rem }
+  .ochips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px }
+  .ochip { flex: none }
+  .ofilters-top .plist-new, .ofilters-top .secondary { flex: 1 1 auto; justify-content: center }
+  .ofilters-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) }
 }
