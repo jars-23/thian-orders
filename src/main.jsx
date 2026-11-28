@@ -1123,7 +1123,7 @@ function App() {
           </>
         )}
         {tab === "production" && seesProduction && (
-          <Production orders={activeOrders} onStatus={setItemStatus} />
+          <Production orders={activeOrders} onStatus={setItemStatus} zones={zones} />
         )}
         {tab === "orders" && (
           <OrdersBoard
@@ -4840,10 +4840,74 @@ function StatusSwitch({ item, onChange, saving }) {
     </div>
   );
 }
-function ProductionDetail({ order, onStatus, onClose, onPhoto }) {
+// Rótulo de entrega (9 × 6 cm) en una ventana aparte, para no chocar con la
+// hoja carta que usa la impresión de facturas.
+const LABEL_W_MM = 90;
+const LABEL_H_MM = 60;
+function printDeliveryLabel(order, city) {
+  const esc = (v) =>
+    String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const logo = new URL(`${import.meta.env.BASE_URL}logo-leon.png`, window.location.href).href;
+  const rows = [
+    ["Cliente", order.customer_name],
+    ["Teléfono", order.customer_phone],
+    ["Dirección", order.delivery_address],
+    ["Ciudad / Municipio", city],
+    ["N.º de pedido", "#" + order.order_number],
+  ]
+    .map(([k, v]) => `<div class="row"><span class="k">${esc(k)}</span><span class="v"><span>${esc(v || "—")}</span></span></div>`)
+    .join("");
+  const truck =
+    '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.62l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg>';
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Rótulo pedido #${esc(order.order_number)}</title>
+<style>
+@page { size: ${LABEL_W_MM}mm ${LABEL_H_MM}mm; margin: 0 }
+* { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact }
+html, body { margin: 0; background: #fff; font-family: "Segoe UI", Arial, sans-serif; color: #2B1A12 }
+.label { width: ${LABEL_W_MM}mm; height: ${LABEL_H_MM}mm; padding: 1.6mm; overflow: hidden }
+.frame { height: 100%; border: .7mm solid #7A0E14; border-radius: 3mm; padding: 1.8mm 2.4mm;
+  box-shadow: inset 0 0 0 .5mm #fff, inset 0 0 0 .8mm #C9A04A; display: flex; flex-direction: column; gap: 1.2mm }
+.head { display: flex; align-items: center; gap: 1.6mm }
+.head img { width: 10mm; height: 10mm; object-fit: contain }
+.brand { flex: 1; min-width: 0; line-height: 1.05 }
+.brand b { display: block; font-family: "Brush Script MT", "Segoe Script", cursive; font-size: 5mm; font-weight: 700; color: #1A0E0A }
+.brand small { font-size: 2mm; color: #2B1A12 } .brand small em { font-style: normal; color: #C0161E; font-weight: 600 }
+.tag { display: flex; align-items: center; gap: 1mm; padding: 1mm 2.2mm 1mm 3mm; background: linear-gradient(90deg, #8E1219, #6A0B10);
+  color: #fff; font: 700 3.4mm Georgia, serif; letter-spacing: .2mm; clip-path: polygon(2mm 0, 100% 0, 100% 100%, 0 100%);
+  border-bottom: .5mm solid #C9A04A }
+.rows { flex: 1; display: flex; flex-direction: column; justify-content: space-between; gap: .9mm }
+.row { flex: 1; display: grid; grid-template-columns: 19mm 1fr; border-radius: 1.6mm; overflow: hidden; border: .25mm solid #C9A04A; min-height: 0 }
+.k { display: flex; align-items: center; padding: 0 1.4mm; background: #7A0E14; color: #fff; font-size: 2.2mm; font-weight: 700; line-height: 1.05 }
+.v { display: flex; align-items: center; padding: 0 1.8mm; background: #F6F1EA; min-width: 0 }
+.v span { font-size: 3mm; font-weight: 600; line-height: 1.12; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden }
+@media screen { body { padding: 8mm; background: #EEE } .label { background: #fff; box-shadow: 0 1mm 4mm rgba(0,0,0,.2); margin: 0 auto } }
+</style></head><body><div class="label"><div class="frame">
+<div class="head"><img src="${esc(logo)}" alt=""><div class="brand"><b>Thian Candle</b><small>Chispa de <em>luz, fe y aroma</em></small></div>
+<div class="tag">${truck} ENTREGA</div></div>
+<div class="rows">${rows}</div>
+</div></div>
+<script>
+(function () {
+  var img = document.images[0], done = false;
+  function go() { if (done) return; done = true; setTimeout(function () { window.focus(); window.print(); }, 150); }
+  if (!img || img.complete) go(); else { img.onload = go; img.onerror = go; setTimeout(go, 2500); }
+})();
+</script></body></html>`;
+  const w = window.open("", "_blank", "width=520,height=420");
+  if (!w) {
+    alert("El navegador bloqueó la ventana del rótulo. Permite las ventanas emergentes para este sitio e inténtalo de nuevo.");
+    return;
+  }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+}
+function ProductionDetail({ order, city = "", onStatus, onClose, onPhoto }) {
   const [savingId, setSavingId] = useState(null);
   const its = order.order_items || [];
   const done = its.filter((i) => i.status === "finished").length;
+  const allDone = its.length > 0 && done === its.length;
   async function change(id, status) {
     setSavingId(id);
     await onStatus(id, status);
@@ -4858,9 +4922,20 @@ function ProductionDetail({ order, onStatus, onClose, onPhoto }) {
           <span>
             <b>{done}</b> de {its.length} productos finalizados
           </span>
-          <button type="button" onClick={onClose}>
-            Listo
-          </button>
+          <span className="modal-actions">
+            <button
+              type="button"
+              className="secondary"
+              disabled={!allDone}
+              title={allDone ? "Rótulo de 9 × 6 cm con los datos de entrega" : "Disponible cuando todos los productos estén finalizados"}
+              onClick={() => printDeliveryLabel(order, city)}
+            >
+              <Printer size={16} aria-hidden="true" /> Imprimir rótulo
+            </button>
+            <button type="button" onClick={onClose}>
+              Listo
+            </button>
+          </span>
         </>
       }
     >
@@ -4901,7 +4976,8 @@ function ProductionDetail({ order, onStatus, onClose, onPhoto }) {
     </Modal>
   );
 }
-function Production({ orders, onStatus }) {
+function Production({ orders, onStatus, zones = [] }) {
+  const zoneName = new Map(zones.map((z) => [z.code, z.name]));
   const [query, setQuery] = useState("");
   const [range, setRange] = useState("all");
   const [sort, setSort] = useState("due");
@@ -5042,6 +5118,7 @@ function Production({ orders, onStatus }) {
       {open && (
         <ProductionDetail
           order={open}
+          city={open.delivery_zone ? zoneName.get(open.delivery_zone) || open.delivery_zone : ""}
           onStatus={onStatus}
           onClose={() => setOpenId(null)}
           onPhoto={setPhoto}
