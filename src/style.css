@@ -2114,3 +2114,27 @@ tr.is-inactive .plist-thumb { opacity: .55 }
 .pwform .pw-show input { width: auto; margin: 0 }
 .pwform .pw-bad { color: var(--danger) }
 .pwform p { margin: 0 0 6px }
+
+/* ===== Listas de precios (fase 2): precio tachado, importación y edición ===== */
+.price-was { color: var(--text-muted); font-weight: 400; text-decoration-thickness: 1px }
+.wlists-tools { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px }
+.pimport-steps { margin: 0 0 12px; padding-left: 20px; display: grid; gap: 4px }
+.pimport-file { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px }
+.pimport-file input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0 }
+.pimport-btn {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 8px 14px; cursor: pointer;
+  border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); font-weight: 600;
+}
+.pimport-file:focus-within .pimport-btn { box-shadow: var(--focus) }
+.pimport-summary { margin: 8px 0; font-weight: 600 }
+.pimport-errors { margin: 8px 0; padding: 10px 12px; border: 1px solid var(--warning); border-radius: var(--radius); background: var(--warning-bg) }
+.pimport-errors summary { cursor: pointer; font-weight: 600 }
+.pimport-errors ul { margin: 8px 0 0; padding-left: 18px; max-height: 180px; overflow: auto }
+.pimport-table, .plist-editor { max-height: 52vh; overflow: auto }
+.plist-editor-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 8px 0 10px }
+.plist-editor-tools .plist-search { flex: 1 1 240px }
+.plist-price-input { width: 120px; text-align: right; min-height: 36px }
+.plist-price-input[aria-invalid="true"] { border-color: var(--danger) }
+@media (max-width: 760px) {
+  .plist-price-input { width: 96px }
+}

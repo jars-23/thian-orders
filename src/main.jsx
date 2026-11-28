@@ -64,6 +64,7 @@ import "./style.css";
 import { ThemeProvider, CssBaseline } from "@mui/material";
 import { theme } from "./theme/theme";
 import LoginForm from "./components/auth/LoginForm";
+import { readSheet, writeXlsx, downloadBlob } from "./sheet";
 const url = import.meta.env.VITE_SUPABASE_URL,
   key = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const supabase = url && key ? createClient(url, key) : null;
@@ -98,6 +99,31 @@ const WHOLESALE_MIN_UNITS = 12;
 // Precio de catálogo según las unidades de ESE producto en el pedido.
 const tierPrice = (p, units) =>
   p ? (units >= WHOLESALE_MIN_UNITS ? (p.price_wholesale ?? p.price) : p.price) : null;
+// Precio de una línea con la lista del vendedor (fase 2, 20261128).
+// Debe coincidir con public.line_price (SQL): si el producto está en la
+// lista activa del vendedor, precio de lista desde 1 unidad y el general
+// como precio real (tachado); si no, la regla mayorista por referencia.
+// special = { name, prices: Map(product_id -> precio) } | null
+const linePrice = (p, units, special) => {
+  if (!p) return { unit: null, list: null };
+  const sp = special?.prices.get(p.id);
+  return sp != null ? { unit: sp, list: p.price } : { unit: tierPrice(p, units), list: null };
+};
+// Precio con el real tachado cuando hay precio de lista.
+function PriceTag({ unit, list }) {
+  return (
+    <>
+      {list != null && list !== unit && (
+        <s className="price-was" aria-label={"Precio real " + fmtMoney(list)}>
+          {fmtMoney(list)}
+        </s>
+      )}{" "}
+      {fmtMoney(unit)}
+    </>
+  );
+}
+// Listas de precios visibles para este usuario (admin: todas; vendedor: la suya).
+const PriceListCtx = React.createContext({ specialFor: () => null });
 // Deben coincidir con los CHECK de orders.payment_status / payment_method.
 const PAYMENT_STATUS = {
   pending: "Pago pendiente",
@@ -161,6 +187,7 @@ function App() {
     [priceLists, setPriceLists] = useState([]),
     [sellerLists, setSellerLists] = useState([]),
     [listsError, setListsError] = useState(""),
+    [priceItems, setPriceItems] = useState([]),
     [pwTarget, setPwTarget] = useState(null), // "self" | perfil de otro usuario
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
@@ -253,7 +280,7 @@ function App() {
   async function reload() {
     if (!profile?.active) return;
     setBusy(true);
-    const [p, o, sn, s, r, ur, z, inv, sup, pc, wc, pl, spl] = await Promise.all([
+    const [p, o, sn, s, r, ur, z, inv, sup, pc, wc, pl, spl, pli] = await Promise.all([
       supabase
         .from("products")
         .select("*")
@@ -262,7 +289,7 @@ function App() {
       supabase
         .from("orders")
         .select(
-          "*,order_items(id,product_id,quantity,status,notes,unit_price,products(name,image_url)),order_payments(id,amount,method,note,created_at)",
+          "*,order_items(id,product_id,quantity,status,notes,unit_price,list_price,products(name,image_url)),order_payments(id,amount,method,note,created_at)",
         )
         .order("created_at", { ascending: false }),
       // profiles solo es legible por el propio usuario o admin; esta RPC
@@ -293,12 +320,10 @@ function App() {
       admin
         ? supabase.from("wholesale_customers").select("*")
         : Promise.resolve({ data: [], error: null }),
-      admin
-        ? supabase.from("price_lists").select("*").order("name")
-        : Promise.resolve({ data: [], error: null }),
-      admin
-        ? supabase.from("seller_price_lists").select("*")
-        : Promise.resolve({ data: [], error: null }),
+      // Listas: el admin ve todas; cada vendedor solo la suya (RLS).
+      supabase.from("price_lists").select("*").order("name"),
+      supabase.from("seller_price_lists").select("*"),
+      supabase.from("price_list_items").select("price_list_id,product_id,price"),
     ]);
     const err = p.error || o.error || s.error || r.error || ur.error;
     if (err) message(err);
@@ -339,6 +364,9 @@ function App() {
       setListsError(plErr ? plErr.message : "");
       setPriceLists(pl.data || []);
       setSellerLists(spl.data || []);
+      // Precios por lista (migración 20261128): sin ella, todo sigue con la regla normal.
+      if (pli.error) console.warn("price_list_items:", pli.error.message);
+      setPriceItems(pli.data || []);
     }
     setBusy(false);
   }
@@ -547,6 +575,32 @@ function App() {
     if (!error) setPriceLists((all) => all.map((l) => (l.id === id ? data : l)));
     return !error;
   }
+  // Guarda precios de listas: upserts [{price_list_id, product_id, price}]
+  // y borrados [{price_list_id, product_id}]. Solo admin (RLS).
+  async function savePriceItems(upserts, deletes) {
+    setBusy(true);
+    let error = null;
+    const stamp = { updated_by: session.user.id, updated_at: new Date().toISOString() };
+    for (let i = 0; !error && i < upserts.length; i += 500) {
+      ({ error } = await supabase
+        .from("price_list_items")
+        .upsert(upserts.slice(i, i + 500).map((x) => ({ ...x, ...stamp }))));
+    }
+    const byList = new Map();
+    deletes.forEach((d) => byList.set(d.price_list_id, [...(byList.get(d.price_list_id) || []), d.product_id]));
+    for (const [listId, ids] of byList) {
+      if (error) break;
+      ({ error } = await supabase.from("price_list_items").delete().eq("price_list_id", listId).in("product_id", ids));
+    }
+    const { data, error: e2 } = await supabase.from("price_list_items").select("price_list_id,product_id,price");
+    if (!e2) setPriceItems(data || []);
+    setBusy(false);
+    message(
+      error,
+      `Precios guardados: ${upserts.length} actualizado${upserts.length === 1 ? "" : "s"}, ${deletes.length} quitado${deletes.length === 1 ? "" : "s"}`,
+    );
+    return !error;
+  }
   async function assignPriceList(sellerId, listId) {
     setBusy(true);
     const q = listId
@@ -652,6 +706,14 @@ function App() {
         .eq("id", newId)
         .select("id");
       assignError = e2 || (!upd?.length && { message: "sin permiso para reasignar" });
+      // Vendedor mayorista: se aplican los precios de su lista (reprice_order).
+      if (!assignError && specialFor(sellerId)) {
+        const { error: e3 } = await supabase.rpc("reprice_order", { p_order_id: newId });
+        if (e3)
+          assignError = {
+            message: "asignado, pero no se aplicaron los precios de su lista (" + e3.message + "). Edita el pedido y usa «Recalcular precios»",
+          };
+      }
     }
     if (assignError)
       message({
@@ -864,6 +926,17 @@ function App() {
           assignments.some((a) => a.user_id === u.id && sellerRoleIds.has(a.role_id)),
       )
     : [];
+  // Precio de lista de un vendedor: { name, prices } o null si no es mayorista.
+  const specialFor = (sellerId) => {
+    const a = sellerLists.find((x) => x.seller_id === sellerId);
+    const l = a && priceLists.find((x) => x.id === a.price_list_id && x.active);
+    if (!l) return null;
+    return {
+      name: l.name,
+      prices: new Map(priceItems.filter((i) => i.price_list_id === l.id).map((i) => [i.product_id, i.price])),
+    };
+  };
+  const priceCtx = { specialFor };
   const counts = { pending: 0, in_progress: 0, finished: 0 };
   activeOrders.forEach((o) => o.order_items?.forEach((i) => counts[i.status]++));
   const initials =
@@ -874,6 +947,7 @@ function App() {
       .map((w) => w[0].toUpperCase())
       .join("") || "?";
   return (
+    <PriceListCtx.Provider value={priceCtx}>
     <div className="shell">
       <aside className={navCollapsed ? "collapsed" : ""}>
         <div className="brand">
@@ -1079,6 +1153,9 @@ function App() {
             onCreateList={createPriceList}
             onUpdateList={updatePriceList}
             onAssign={assignPriceList}
+            products={products}
+            priceItems={priceItems}
+            onSavePrices={savePriceItems}
           />
         )}
         {tab === "settlement" && admin && (
@@ -1352,6 +1429,7 @@ function App() {
         />
       )}
     </div>
+    </PriceListCtx.Provider>
   );
 }
 // Ventana para fijar una contraseña nueva (propia o de otro usuario).
@@ -1457,7 +1535,7 @@ function UsernameEditor({ user, busy, onSave }) {
 }
 // Catálogo visual (categorías, búsqueda y tarjetas). Se usa al crear el
 // pedido y en la ventana "Agregar productos" al editarlo.
-function ProductCatalog({ products, inCart, onAdd, titleId, title = "Catálogo" }) {
+function ProductCatalog({ products, inCart, onAdd, titleId, title = "Catálogo", special = null }) {
   const [cat, setCat] = useState("all");
   const [query, setQuery] = useState("");
   const catOf = (p) => p.category || "Otros";
@@ -1537,6 +1615,15 @@ function ProductCatalog({ products, inCart, onAdd, titleId, title = "Catálogo" 
                     {p.description && <p>{p.description}</p>}
                     <div className="pcard-foot">
                       <div className="pcard-prices">
+                        {special?.prices.has(p.id) ? (
+                          <>
+                            <strong>{fmtMoney(special.prices.get(p.id))}</strong>
+                            <small>
+                              <s className="price-was">{fmtMoney(p.price)}</s> · {special.name}
+                            </small>
+                          </>
+                        ) : (
+                          <>
                         <strong>{fmtMoney(tierPrice(p, n))}</strong>
                         {p.price_wholesale != null && (
                           <small>
@@ -1544,6 +1631,8 @@ function ProductCatalog({ products, inCart, onAdd, titleId, title = "Catálogo" 
                               ? "Mayorista · general " + fmtMoney(p.price)
                               : "Mayorista " + fmtMoney(p.price_wholesale) + " desde " + WHOLESALE_MIN_UNITS + " u."}
                           </small>
+                        )}
+                          </>
                         )}
                       </div>
                       <button
@@ -1566,6 +1655,9 @@ function ProductCatalog({ products, inCart, onAdd, titleId, title = "Catálogo" 
 }
 function OrderForm({ products, zones = [], busy, sellerOptions = [], meId, onSubmit }) {
   const [lines, setLines] = useState([]);
+  // Vendedor del pedido (admin puede elegir otro): define la lista de precios.
+  const [sellerId, setSellerId] = useState(meId || "");
+  const special = React.useContext(PriceListCtx).specialFor(sellerOptions.length ? sellerId : meId);
   const [zone, setZone] = useState("");
   const [payStatus, setPayStatus] = useState("pending");
   const [payMethod, setPayMethod] = useState("");
@@ -1607,9 +1699,13 @@ function OrderForm({ products, zones = [], busy, sellerOptions = [], meId, onSub
       .reduce((s, l) => s + (Number(l.quantity) || 0), 0);
   const units = lines.reduce((s, l) => s + (Number(l.quantity) || 0), 0);
   // Mayorista por referencia: cuenta las unidades de cada producto.
-  const unitPrice = (p) => (p ? tierPrice(p, inCart(p.id)) : null);
-  const isWholesale = (p) => !!p && p.price_wholesale != null && inCart(p.id) >= WHOLESALE_MIN_UNITS;
-  const wholesale = lines.some((l) => isWholesale(byId.get(l.product_id)));
+  // Lista del vendedor: precio especial desde 1 unidad (linePrice).
+  const unitPrice = (p) => (p ? linePrice(p, inCart(p.id), special).unit : null);
+  const listOf = (p) => (p ? linePrice(p, inCart(p.id), special).list : null);
+  const onList = (p) => !!p && !!special?.prices.has(p.id);
+  const isWholesale = (p) => !!p && !onList(p) && p.price_wholesale != null && inCart(p.id) >= WHOLESALE_MIN_UNITS;
+  const wholesale = lines.some((l) => isWholesale(byId.get(l.product_id)) || onList(byId.get(l.product_id)));
+  const listCount = lines.filter((l) => onList(byId.get(l.product_id))).length;
   const subtotal = lines.reduce(
     (s, l) => s + (unitPrice(byId.get(l.product_id)) || 0) * (Number(l.quantity) || 0),
     0,
@@ -1645,6 +1741,7 @@ function OrderForm({ products, zones = [], busy, sellerOptions = [], meId, onSub
     >
       <section className="panel catalog" aria-labelledby="catalog-title">
         <ProductCatalog
+          special={special}
           products={products}
           inCart={inCart}
           onAdd={add}
@@ -1659,7 +1756,7 @@ function OrderForm({ products, zones = [], busy, sellerOptions = [], meId, onSub
             {sellerOptions.length > 0 && (
               <label>
                 Vendedor
-                <select name="seller_id" defaultValue={meId || ""}>
+                <select name="seller_id" value={sellerId} onChange={(e) => setSellerId(e.target.value)}>
                   {sellerOptions.map((u) => (
                     <option key={u.id} value={u.id}>
                       {u.full_name || u.username || "Sin nombre"}
@@ -1821,10 +1918,11 @@ function OrderForm({ products, zones = [], busy, sellerOptions = [], meId, onSub
                       <div className="cartinfo">
                         <b>{p?.name || "Producto"}</b>
                         <small>
-                          {fmtMoney(unitPrice(p))} c/u
+                          <PriceTag unit={unitPrice(p)} list={listOf(p)} /> c/u
                           {qty > 1 && unitPrice(p) != null && (
                             <> · {fmtMoney(unitPrice(p) * qty)}</>
                           )}
+                          {onList(p) && <> · <span className="tag-wholesale">{special.name}</span></>}
                           {isWholesale(p) && <> · <span className="tag-wholesale">Mayorista</span></>}
                         </small>
                       </div>
@@ -1892,12 +1990,22 @@ function OrderForm({ products, zones = [], busy, sellerOptions = [], meId, onSub
             </ul>
           )}
           <div className="cartfoot" ref={footRef}>
-            <p className={"wholesale-note" + (wholesale ? " on" : "")}>
-              <b>Precio mayorista por referencia</b>
-              <small>
-                Se aplica a cada producto desde {WHOLESALE_MIN_UNITS} unidades del mismo producto.
-              </small>
-            </p>
+            {special ? (
+              <p className={"wholesale-note" + (listCount ? " on" : "")}>
+                <b>Lista de precios · {special.name}</b>
+                <small>
+                  Precio especial desde 1 unidad en los productos de la lista; el resto sigue la regla
+                  mayorista desde {WHOLESALE_MIN_UNITS} unidades.
+                </small>
+              </p>
+            ) : (
+              <p className={"wholesale-note" + (wholesale ? " on" : "")}>
+                <b>Precio mayorista por referencia</b>
+                <small>
+                  Se aplica a cada producto desde {WHOLESALE_MIN_UNITS} unidades del mismo producto.
+                </small>
+              </p>
+            )}
             {zoneRow && (
               <dl className="cartbreak">
                 <div>
@@ -1915,9 +2023,11 @@ function OrderForm({ products, zones = [], busy, sellerOptions = [], meId, onSub
               <strong>{fmtMoney(total)}</strong>
             </div>
             <small className="carthint">
-              {wholesale
-                ? "Incluye precio mayorista en las referencias con " + WHOLESALE_MIN_UNITS + "+ unidades."
-                : "Calculado con el precio general."}
+              {listCount
+                ? "Incluye precios de la lista " + special.name + "."
+                : wholesale
+                  ? "Incluye precio mayorista en las referencias con " + WHOLESALE_MIN_UNITS + "+ unidades."
+                  : "Calculado con el precio general."}
             </small>
             <button className="cartsubmit" disabled={busy || !valid}>
               {busy && <Loader2 size={16} className="spin" aria-hidden="true" />}
@@ -2035,6 +2145,8 @@ function Lightbox({ photo, onClose }) {
 // Editar datos del pedido. El pago solo lo ven Administrador y Facturación.
 function OrderEditForm({ order, products = [], zones = [], invoiced = false, canBill, admin = false, onSave, onCancel }) {
   const byId = new Map(products.map((p) => [p.id, p]));
+  // Lista de precios del vendedor del pedido (la misma que usa update_order).
+  const special = React.useContext(PriceListCtx).specialFor(order.seller_id);
   const [zone, setZone] = useState(order.delivery_zone || "");
   const zoneRow = zones.find((z) => z.code === zone);
   const zoneChanged = !!zone && zone !== (order.delivery_zone || "");
@@ -2047,6 +2159,7 @@ function OrderEditForm({ order, products = [], zones = [], invoiced = false, can
     notes: i.notes || "",
     status: i.status,
     unit_price: i.unit_price,
+    list_price: i.list_price ?? null,
     name: i.products?.name || byId.get(i.product_id)?.name || "Producto",
     image_url: i.products?.image_url || byId.get(i.product_id)?.image_url || null,
   }));
@@ -2073,6 +2186,7 @@ function OrderEditForm({ order, products = [], zones = [], invoiced = false, can
           notes: "",
           status: "pending",
           unit_price: null,
+          list_price: null,
           name: p.name,
           image_url: p.image_url || null,
         },
@@ -2103,19 +2217,25 @@ function OrderEditForm({ order, products = [], zones = [], invoiced = false, can
     const p = byId.get(x.product_id);
     const pending = !x.id || x.status === "pending";
     if (!itemsDirty || !pending || !p) return x.unit_price ?? (p ? p.price : 0);
-    return tierPrice(p, countOf(x.product_id));
+    return linePrice(p, countOf(x.product_id), special).unit;
+  };
+  const listOf = (x) => {
+    const p = byId.get(x.product_id);
+    const pending = !x.id || x.status === "pending";
+    if (!itemsDirty || !pending || !p) return x.list_price ?? null;
+    return linePrice(p, countOf(x.product_id), special).list;
   };
   // Líneas pendientes guardadas cuyo precio ya no coincide con el catálogo.
   const staleItems = items.filter((x) => {
     const p = byId.get(x.product_id);
-    return x.id && x.status === "pending" && p && x.unit_price !== tierPrice(p, countOf(x.product_id));
+    return x.id && x.status === "pending" && p && x.unit_price !== linePrice(p, countOf(x.product_id), special).unit;
   });
   const canReprice = admin && !invoiced && !order.cancelled_at;
   const wholesaleOf = (x) => {
     const p = byId.get(x.product_id);
-    return !!p && p.price_wholesale != null && priceOf(x) === p.price_wholesale && countOf(x.product_id) >= WHOLESALE_MIN_UNITS;
+    return !!p && listOf(x) == null && p.price_wholesale != null && priceOf(x) === p.price_wholesale && countOf(x.product_id) >= WHOLESALE_MIN_UNITS;
   };
-  const wholesaleNow = items.some(wholesaleOf);
+  const wholesaleNow = items.some((x) => wholesaleOf(x) || listOf(x) != null);
   const total =
     items.reduce((s, x) => s + (priceOf(x) || 0) * (Number(x.quantity) || 0), 0) + fee;
   const itemsValid =
@@ -2256,9 +2376,10 @@ function OrderEditForm({ order, products = [], zones = [], invoiced = false, can
                 <div className="edititem-info">
                   <b>{x.name}</b>
                   <small>
-                    {fmtMoney(priceOf(x))} c/u
+                    <PriceTag unit={priceOf(x)} list={listOf(x)} /> c/u
                     {qty > 1 && <> · {fmtMoney(priceOf(x) * qty)}</>}
                     {!x.id && <> · nuevo</>}
+                    {listOf(x) != null && <> · <span className="tag-wholesale">{special?.name || "Lista"}</span></>}
                     {wholesaleOf(x) && <> · <span className="tag-wholesale">Mayorista</span></>}
                   </small>
                   {locked && (
@@ -2343,6 +2464,7 @@ function OrderEditForm({ order, products = [], zones = [], invoiced = false, can
             }
           >
             <ProductCatalog
+              special={special}
               products={addable}
               inCart={countOf}
               onAdd={addFromCatalog}
@@ -3077,7 +3199,9 @@ function Orders({ orders, busy, canBill, admin = false, userId, canSell, onEdit,
                       </div>
                     </td>
                     <td className="num">{i.quantity}</td>
-                    <td className="num">{fmtMoney(i.unit_price)}</td>
+                    <td className="num">
+                      <PriceTag unit={i.unit_price} list={i.list_price} />
+                    </td>
                     <td className="num">
                       {i.unit_price == null ? "—" : fmtMoney(i.unit_price * i.quantity)}
                     </td>
@@ -4910,6 +5034,7 @@ function invoiceDraft(order, zones) {
       name: i.products?.name || "Producto",
       quantity: i.quantity,
       unit_price: i.unit_price || 0,
+      list_price: i.list_price ?? null,
       notes: i.notes,
     })),
     subtotal: sub,
@@ -4989,7 +5114,9 @@ function InvoiceDoc({ inv }) {
                 {i.notes && <small>{i.notes}</small>}
               </td>
               <td className="num">{i.quantity}</td>
-              <td className="num">{fmtMoney(i.unit_price)}</td>
+              <td className="num">
+                <PriceTag unit={i.unit_price} list={i.list_price ?? null} />
+              </td>
               <td className="num">{fmtMoney(i.unit_price * i.quantity)}</td>
             </tr>
           ))}
@@ -5387,7 +5514,9 @@ function Wholesalers(props) {
     </>
   );
 }
-function WholesaleSellers({ orders, sellers, priceLists, sellerLists, listsError, busy, onCreateList, onUpdateList, onAssign }) {
+function WholesaleSellers({ orders, sellers, priceLists, sellerLists, listsError, busy, onCreateList, onUpdateList, onAssign, products = [], priceItems = [], onSavePrices }) {
+  const [pricesOf, setPricesOf] = useState(null), // lista abierta para editar precios
+    [importing, setImporting] = useState(false);
   const [newName, setNewName] = useState(""),
     [editId, setEditId] = useState(null),
     [editName, setEditName] = useState(""),
@@ -5424,9 +5553,17 @@ function WholesaleSellers({ orders, sellers, priceLists, sellerLists, listsError
         <div className="wlists-head">
           <h2>Listas de precios</h2>
           <p className="omuted">
-            Cada vendedor mayorista tiene una lista. Los precios por producto se cargan en la fase 2; por
-            ahora los pedidos siguen con la regla actual.
+            Cada vendedor mayorista tiene una lista. Sus pedidos toman el precio de la lista desde 1 unidad;
+            los productos que no estén en la lista siguen la regla normal.
           </p>
+          <div className="wlists-tools">
+            <button type="button" className="secondary compact" disabled={!priceLists.length} onClick={() => downloadPriceTemplate(products, priceLists, priceItems)}>
+              <Download size={16} aria-hidden="true" /> Descargar plantilla
+            </button>
+            <button type="button" className="compact" disabled={busy || !!listsError || !priceLists.length} onClick={() => setImporting(true)}>
+              <FileText size={16} aria-hidden="true" /> Importar precios
+            </button>
+          </div>
         </div>
         <ul className="wlist-items">
           {priceLists.map((l) => (
@@ -5457,6 +5594,9 @@ function WholesaleSellers({ orders, sellers, priceLists, sellerLists, listsError
                     </small>
                   </span>
                   <span className="wlist-actions">
+                    <button type="button" className="secondary compact" disabled={disabled} onClick={() => setPricesOf(l.id)}>
+                      Precios ({priceItems.filter((i) => i.price_list_id === l.id).length})
+                    </button>
                     <button
                       type="button"
                       className="iconbtn"
@@ -5559,9 +5699,387 @@ function WholesaleSellers({ orders, sellers, priceLists, sellerLists, listsError
           {!rows.length && <li className="plist-empty">Ningún vendedor coincide.</li>}
         </ul>
       </section>
+      {pricesOf && listById.get(pricesOf) && (
+        <PriceListEditor
+          list={listById.get(pricesOf)}
+          products={products}
+          priceItems={priceItems}
+          busy={busy}
+          onClose={() => setPricesOf(null)}
+          onSave={async (up, del) => {
+            if (await onSavePrices(up, del)) setPricesOf(null);
+          }}
+        />
+      )}
+      {importing && (
+        <PriceImportModal
+          products={products}
+          priceLists={priceLists}
+          priceItems={priceItems}
+          busy={busy}
+          onClose={() => setImporting(false)}
+          onApply={async (up, del) => {
+            if (await onSavePrices(up, del)) setImporting(false);
+          }}
+        />
+      )}
     </div>
   );
 }
+// ---------------------------------------------------------------------
+// Precios por lista (fase 2): plantilla Excel, importación y edición manual.
+// ---------------------------------------------------------------------
+const PRICE_FIXED_COLS = ["Referencia", "Producto", "Categoría", "Precio general", "Precio mayorista"];
+const normHead = (s) =>
+  String(s || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+// "18.000", "$ 18,000", 18000 -> 18000. Vacío -> null. Otro texto -> NaN.
+function parsePrice(v) {
+  const t = String(v ?? "").trim();
+  if (!t) return null;
+  // Número de Excel: sin miles y con 1-2 o 4+ decimales. "18.000" se toma como miles.
+  if (/^\d+(\.(\d{1,2}|\d{4,}))?(e[+-]?\d+)?$/i.test(t)) return Math.round(Number(t));
+  const digits = t.replace(/[$\s]/g, "").replace(/[.,](?=\d{3}(\D|$))/g, "");
+  return /^\d+$/.test(digits) ? Number(digits) : NaN;
+}
+const sortProducts = (products) =>
+  [...products].sort(
+    (a, b) =>
+      (a.category || "").localeCompare(b.category || "", "es") || a.name.localeCompare(b.name, "es"),
+  );
+
+function downloadPriceTemplate(products, priceLists, priceItems) {
+  const lists = priceLists.filter((l) => l.active);
+  const price = new Map(priceItems.map((i) => [i.price_list_id + "|" + i.product_id, i.price]));
+  const rows = [
+    [...PRICE_FIXED_COLS, ...lists.map((l) => l.name)],
+    ...sortProducts(products.filter((p) => p.active)).map((p) => [
+      p.sku || "",
+      p.name,
+      p.category || "",
+      p.price ?? "",
+      p.price_wholesale ?? "",
+      ...lists.map((l) => price.get(l.id + "|" + p.id) ?? ""),
+    ]),
+  ];
+  const blob = writeXlsx(rows, {
+    sheetName: "Precios mayoristas",
+    widths: [16, 38, 18, 15, 17, ...lists.map(() => 18)],
+  });
+  downloadBlob(blob, `plantilla-precios-mayoristas-${new Date().toLocaleDateString("en-CA")}.xlsx`);
+}
+
+// Compara la hoja con los precios guardados. Devuelve cambios y errores.
+function buildPriceImport(rows, products, priceLists, priceItems) {
+  const errors = [];
+  const head = (rows[0] || []).map(normHead);
+  const refCol = head.indexOf("referencia");
+  const nameCol = head.indexOf("producto");
+  if (refCol < 0 && nameCol < 0)
+    return { errors: ["La primera fila debe tener la columna «Referencia» o «Producto»."], changes: [], lists: [] };
+  const fixed = new Set(PRICE_FIXED_COLS.map(normHead));
+  const listByName = new Map(priceLists.map((l) => [normHead(l.name), l]));
+  const lists = [];
+  head.forEach((h, c) => {
+    if (!h || fixed.has(h)) return;
+    const l = listByName.get(h);
+    if (!l) errors.push(`Columna «${rows[0][c]}»: no existe una lista con ese nombre (se ignora).`);
+    else if (!l.active) errors.push(`Columna «${rows[0][c]}»: la lista está inactiva (se ignora).`);
+    else lists.push({ col: c, list: l });
+  });
+  if (!lists.length) errors.push("No hay columnas con el nombre de una lista activa: no hay nada que importar.");
+  const bySku = new Map(products.filter((p) => p.sku).map((p) => [p.sku.trim().toLowerCase(), p]));
+  const byName = new Map();
+  products.forEach((p) => {
+    const k = normHead(p.name);
+    byName.set(k, byName.has(k) ? "dup" : p);
+  });
+  const current = new Map(priceItems.map((i) => [i.price_list_id + "|" + i.product_id, i.price]));
+  const seen = new Set();
+  const changes = [];
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r] || [];
+    if (!row.some((v) => String(v ?? "").trim())) continue; // fila vacía
+    const ref = refCol >= 0 ? String(row[refCol] ?? "").trim() : "";
+    const name = nameCol >= 0 ? String(row[nameCol] ?? "").trim() : "";
+    let p = ref ? bySku.get(ref.toLowerCase()) : null;
+    if (!p && name) {
+      const hit = byName.get(normHead(name));
+      if (hit === "dup") {
+        errors.push(`Fila ${r + 1}: hay varios productos llamados «${name}»; usa la Referencia.`);
+        continue;
+      }
+      p = hit || null;
+    }
+    if (!p) {
+      errors.push(`Fila ${r + 1}: no se encontró el producto «${ref || name}».`);
+      continue;
+    }
+    if (seen.has(p.id)) {
+      errors.push(`Fila ${r + 1}: «${p.name}» está repetido; se usa la primera fila.`);
+      continue;
+    }
+    seen.add(p.id);
+    for (const { col, list } of lists) {
+      const v = parsePrice(row[col]);
+      const before = current.get(list.id + "|" + p.id) ?? null;
+      if (Number.isNaN(v)) {
+        errors.push(`Fila ${r + 1}, ${list.name}: «${row[col]}» no es un precio válido.`);
+        continue;
+      }
+      if (v === before) continue;
+      changes.push({
+        list,
+        product: p,
+        before,
+        after: v,
+        kind: v == null ? "remove" : before == null ? "new" : "change",
+      });
+    }
+  }
+  return { errors, changes, lists: lists.map((x) => x.list) };
+}
+
+const PRICE_KIND = { new: ["Nuevo", "pay-paid"], change: ["Cambia", "pay-partial"], remove: ["Se quita", "cancelled-pill"] };
+
+function PriceImportModal({ products, priceLists, priceItems, busy, onClose, onApply }) {
+  const [fileName, setFileName] = useState(""),
+    [result, setResult] = useState(null),
+    [readError, setReadError] = useState(""),
+    [reading, setReading] = useState(false);
+  const pick = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setFileName(file.name);
+    setReadError("");
+    setResult(null);
+    setReading(true);
+    try {
+      const rows = await readSheet(file);
+      setResult(buildPriceImport(rows, products, priceLists, priceItems));
+    } catch (err) {
+      setReadError(err.message || "No se pudo leer el archivo.");
+    }
+    setReading(false);
+  };
+  const changes = result?.changes || [];
+  const count = (k) => changes.filter((c) => c.kind === k).length;
+  const apply = () =>
+    onApply(
+      changes
+        .filter((c) => c.kind !== "remove")
+        .map((c) => ({ price_list_id: c.list.id, product_id: c.product.id, price: c.after })),
+      changes.filter((c) => c.kind === "remove").map((c) => ({ price_list_id: c.list.id, product_id: c.product.id })),
+    );
+  return (
+    <Modal
+      title="Importar precios de las listas"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="secondary" onClick={onClose}>
+            Cancelar
+          </button>
+          <button type="button" disabled={busy || !changes.length} onClick={apply}>
+            {busy && <Loader2 size={16} className="spin" aria-hidden="true" />} Aplicar {changes.length || ""} cambio
+            {changes.length === 1 ? "" : "s"}
+          </button>
+        </>
+      }
+    >
+      <ol className="pimport-steps omuted">
+        <li>Descarga la plantilla: trae todos los productos y una columna por cada lista activa.</li>
+        <li>Escribe el precio en pesos en la columna de la lista. Celda vacía = sin precio especial.</li>
+        <li>Sube el archivo (.xlsx o .csv) y revisa los cambios antes de aplicarlos.</li>
+      </ol>
+      <label className="pimport-file">
+        <span className="secondary compact pimport-btn">
+          <FileText size={16} aria-hidden="true" /> {fileName ? "Elegir otro archivo" : "Elegir archivo"}
+        </span>
+        <input type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={pick} />
+        {fileName && <small className="omuted">{fileName}</small>}
+      </label>
+      {reading && (
+        <p className="omuted">
+          <Loader2 size={16} className="spin" aria-hidden="true" /> Leyendo…
+        </p>
+      )}
+      {readError && (
+        <div className="alert error" role="alert">
+          {readError}
+        </div>
+      )}
+      {result && (
+        <>
+          <p className="pimport-summary" role="status">
+            {result.lists.length ? <>Listas: <b>{result.lists.map((l) => l.name).join(", ")}</b> · </> : null}
+            {count("new")} nuevo{count("new") === 1 ? "" : "s"} · {count("change")} cambio
+            {count("change") === 1 ? "" : "s"} · {count("remove")} se quita{count("remove") === 1 ? "" : "n"}
+            {!changes.length && !result.errors.length && " · sin cambios: los precios ya coinciden"}
+          </p>
+          {result.errors.length > 0 && (
+            <details className="pimport-errors" open={!changes.length}>
+              <summary>
+                {result.errors.length} aviso{result.errors.length === 1 ? "" : "s"} (no se importan esas filas)
+              </summary>
+              <ul>
+                {result.errors.slice(0, 100).map((x, i) => (
+                  <li key={i}>{x}</li>
+                ))}
+                {result.errors.length > 100 && <li>… y {result.errors.length - 100} más.</li>}
+              </ul>
+            </details>
+          )}
+          {changes.length > 0 && (
+            <div className="tablewrap pimport-table">
+              <table className="plist-table">
+                <thead>
+                  <tr>
+                    <th>Producto</th>
+                    <th>Lista</th>
+                    <th className="num">Antes</th>
+                    <th className="num">Ahora</th>
+                    <th>Cambio</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {changes.slice(0, 300).map((c, i) => (
+                    <tr key={i}>
+                      <td>
+                        {c.product.name}
+                        {c.product.sku && <small className="plist-sku">{c.product.sku}</small>}
+                      </td>
+                      <td>{c.list.name}</td>
+                      <td className="num">{c.before == null ? "—" : fmtMoney(c.before)}</td>
+                      <td className="num">{c.after == null ? "—" : fmtMoney(c.after)}</td>
+                      <td>
+                        <span className={"pill " + PRICE_KIND[c.kind][1]}>{PRICE_KIND[c.kind][0]}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {changes.length > 300 && <p className="omuted">Se muestran 300 de {changes.length}; se aplican todos.</p>}
+            </div>
+          )}
+        </>
+      )}
+    </Modal>
+  );
+}
+
+// Edición manual de los precios de una lista.
+function PriceListEditor({ list, products, priceItems, busy, onClose, onSave }) {
+  const saved = new Map(priceItems.filter((i) => i.price_list_id === list.id).map((i) => [i.product_id, i.price]));
+  const [draft, setDraft] = useState(() => new Map([...saved].map(([k, v]) => [k, String(v)])));
+  const [query, setQuery] = useState(""),
+    [onlyListed, setOnlyListed] = useState(saved.size > 0);
+  const q = normHead(query);
+  const rows = sortProducts(products.filter((p) => p.active || saved.has(p.id))).filter(
+    (p) =>
+      (!onlyListed || saved.has(p.id) || draft.get(p.id)) &&
+      (!q || normHead(p.name).includes(q) || normHead(p.sku).includes(q)),
+  );
+  const diff = [];
+  let invalid = 0;
+  new Set([...saved.keys(), ...draft.keys()]).forEach((id) => {
+    const v = parsePrice(draft.get(id));
+    if (Number.isNaN(v)) invalid++;
+    else if (v !== (saved.get(id) ?? null)) diff.push({ product_id: id, price: v });
+  });
+  const save = () =>
+    onSave(
+      diff.filter((d) => d.price != null).map((d) => ({ price_list_id: list.id, ...d })),
+      diff.filter((d) => d.price == null).map((d) => ({ price_list_id: list.id, product_id: d.product_id })),
+    );
+  return (
+    <Modal
+      title={"Precios · " + list.name}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="secondary" onClick={onClose}>
+            Cancelar
+          </button>
+          <button type="button" disabled={busy || !diff.length || invalid > 0} onClick={save}>
+            {busy && <Loader2 size={16} className="spin" aria-hidden="true" />} Guardar {diff.length || ""} cambio
+            {diff.length === 1 ? "" : "s"}
+          </button>
+        </>
+      }
+    >
+      <p className="omuted">
+        Precio en pesos por unidad, desde 1 unidad. Deja la casilla vacía para que el producto siga la regla normal.
+      </p>
+      <div className="plist-editor-tools">
+        <label className="plist-search">
+          <Search size={18} aria-hidden="true" />
+          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar producto o referencia…" aria-label="Buscar producto" />
+        </label>
+        <label className="pw-show">
+          <input type="checkbox" checked={onlyListed} onChange={(e) => setOnlyListed(e.target.checked)} /> Solo productos con precio
+        </label>
+      </div>
+      {invalid > 0 && (
+        <div className="alert error" role="alert">
+          Hay {invalid} precio{invalid === 1 ? "" : "s"} no válido{invalid === 1 ? "" : "s"}: usa solo números.
+        </div>
+      )}
+      <div className="tablewrap plist-editor">
+        <table className="plist-table">
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th className="num">General</th>
+              <th className="num">Mayorista 12+</th>
+              <th className="num">Precio de la lista</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((p) => {
+              const v = draft.get(p.id) ?? "";
+              const bad = Number.isNaN(parsePrice(v));
+              return (
+                <tr key={p.id} className={p.active ? "" : "is-inactive"}>
+                  <td>
+                    {p.name}
+                    <small className="plist-sku">{p.sku || "Sin referencia"}</small>
+                  </td>
+                  <td className="num">{fmtMoney(p.price)}</td>
+                  <td className="num">{p.price_wholesale == null ? "—" : fmtMoney(p.price_wholesale)}</td>
+                  <td className="num">
+                    <input
+                      className="plist-price-input"
+                      inputMode="numeric"
+                      value={v}
+                      aria-label={"Precio de " + p.name + " en " + list.name}
+                      aria-invalid={bad}
+                      placeholder="—"
+                      onChange={(e) => setDraft((m) => new Map(m).set(p.id, e.target.value))}
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+            {!rows.length && (
+              <tr>
+                <td colSpan={4} className="plist-empty">
+                  {onlyListed ? "Esta lista aún no tiene precios. Quita «Solo productos con precio» para agregarlos." : "Ningún producto coincide."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Modal>
+  );
+}
+
 function WholesaleTagModal({ row, busy, disabled, onClose, onSave, onRemove }) {
   const [category, setCategory] = useState(row.category || ""),
     [notes, setNotes] = useState(row.notes || ""),

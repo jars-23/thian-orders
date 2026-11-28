@@ -30,16 +30,19 @@ flowchart LR
 | `product_costs` | Historial de costos por producto (solo admin). La liquidación usa el vigente en la fecha de la factura |
 | `wholesale_customers` | Categoría manual de cada cliente mayorista (distribuidor, tienda, revendedor, empresa, otro) y notas; clave = teléfono o nombre (`customerKey`). Solo admin (migración 20261127) |
 | `price_lists` | Listas de precios mayoristas (nombre único, activa). Admin crea/modifica; el vendedor lee solo la suya (migración 20261127b) |
-| `seller_price_lists` | Qué lista tiene cada vendedor (una por vendedor) = vendedor mayorista. Admin todo; el vendedor lee su fila. Fase 1: aún no cambia precios |
+| `seller_price_lists` | Qué lista tiene cada vendedor (una por vendedor) = vendedor mayorista. Admin todo; el vendedor lee su fila |
+| `price_list_items` | Precio en pesos de cada producto en cada lista (desde 1 u.). Admin todo; el vendedor lee los de su lista (migración 20261128) |
 | `orders` | Pedido: cliente, entrega, mayorista, pago |
-| `order_items` | Productos del pedido con estado de producción y precio congelado |
+| `order_items` | Productos del pedido con estado de producción y precio congelado; `list_price` = precio general cuando se aplicó precio de lista (se muestra tachado) |
 | `order_payments` | Historial de abonos y correcciones |
 
 ## RPC principales
 | RPC | Quién | Qué hace |
 |---|---|---|
-| `create_order` | Vende (admin, seller) | Crea pedido; mayorista por referencia (12+ u. del mismo producto); domicilio; pago inicial |
+| `create_order` | Vende (admin, seller) | Crea pedido; precio por línea con `line_price` (lista del vendedor desde 1 u., si no mayorista por referencia 12+); domicilio; pago inicial |
 | `update_order` | Admin, billing o vendedor dueño | Edita cliente, productos pendientes y pago |
+| `line_price` | Autenticado (INVOKER, RLS) | Precio de una línea: lista activa del vendedor o regla mayorista; devuelve `unit_price` y `list_price` |
+| `reprice_order` | Admin | Aplica la lista del vendedor a las líneas pendientes de un pedido no facturado (pedido creado por el admin y reasignado) y ajusta el pago |
 | `set_order_item_status` | Producción | Cambia solo `order_items.status` |
 | `order_seller_names` | Todos | Nombre del vendedor de pedidos visibles |
 | `my_roles` | Todos | Roles del usuario actual |
