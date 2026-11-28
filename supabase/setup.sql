@@ -1214,3 +1214,27 @@ GRANT SELECT, INSERT ON public.product_costs TO authenticated;
 -- Proveedor propio (producción de Thian): no se le paga a terceros.
 ALTER TABLE public.suppliers ADD COLUMN IF NOT EXISTS own boolean NOT NULL DEFAULT false;
 UPDATE public.suppliers SET own = true WHERE name ILIKE 'thian%';
+
+-- =====================================================================
+-- 18. Clasificación de clientes mayoristas (migración 20261127).
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS public.wholesale_customers (
+  customer_key   text PRIMARY KEY CHECK (length(trim(customer_key)) > 0),
+  customer_name  text NOT NULL CHECK (length(trim(customer_name)) > 0),
+  customer_phone text,
+  category       text NOT NULL
+                 CHECK (category IN ('distribuidor','tienda','revendedor','empresa','otro')),
+  notes          text CHECK (notes IS NULL OR length(notes) <= 500),
+  updated_by     uuid NOT NULL DEFAULT auth.uid() REFERENCES public.profiles(id),
+  updated_at     timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.wholesale_customers ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "wholesale_customers admin read" ON public.wholesale_customers
+  FOR SELECT TO authenticated USING (public.is_admin());
+CREATE POLICY "wholesale_customers admin insert" ON public.wholesale_customers
+  FOR INSERT TO authenticated WITH CHECK (public.is_admin());
+CREATE POLICY "wholesale_customers admin update" ON public.wholesale_customers
+  FOR UPDATE TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());
+CREATE POLICY "wholesale_customers admin delete" ON public.wholesale_customers
+  FOR DELETE TO authenticated USING (public.is_admin());
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.wholesale_customers TO authenticated;

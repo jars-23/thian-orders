@@ -53,6 +53,11 @@ import {
   MessageCircle,
   PanelRightOpen,
   Filter,
+  Store,
+  Repeat2,
+  Building2,
+  Tag,
+  CircleHelp,
 } from "lucide-react";
 import "./style.css";
 import { ThemeProvider, CssBaseline } from "@mui/material";
@@ -150,6 +155,8 @@ function App() {
     [sellers, setSellers] = useState([]),
     [zones, setZones] = useState([]),
     [invoices, setInvoices] = useState([]),
+    [wholesaleTags, setWholesaleTags] = useState([]),
+    [wholesaleError, setWholesaleError] = useState(""),
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -241,7 +248,7 @@ function App() {
   async function reload() {
     if (!profile?.active) return;
     setBusy(true);
-    const [p, o, sn, s, r, ur, z, inv, sup, pc] = await Promise.all([
+    const [p, o, sn, s, r, ur, z, inv, sup, pc, wc] = await Promise.all([
       supabase
         .from("products")
         .select("*")
@@ -278,6 +285,9 @@ function App() {
             .select("product_id,cost,valid_from")
             .order("valid_from", { ascending: false })
         : Promise.resolve({ data: [], error: null }),
+      admin
+        ? supabase.from("wholesale_customers").select("*")
+        : Promise.resolve({ data: [], error: null }),
     ]);
     const err = p.error || o.error || s.error || r.error || ur.error;
     if (err) message(err);
@@ -308,6 +318,10 @@ function App() {
       if (inv.error) console.warn("invoices:", inv.error.message);
       setZones(z.data || []);
       setInvoices(inv.data || []);
+      // Mayoristas: si la migración 20261127 no está aplicada, solo ese menú avisa.
+      if (wc.error) console.warn("wholesale_customers:", wc.error.message);
+      setWholesaleError(wc.error ? wc.error.message : "");
+      setWholesaleTags(wc.data || []);
     }
     setBusy(false);
   }
@@ -423,6 +437,36 @@ function App() {
       await reload();
     }
     setBusy(false);
+  }
+  // Mayoristas: guarda o quita la categoría de un cliente (solo admin, RLS).
+  async function saveWholesaleTag(row, category, notes) {
+    setBusy(true);
+    const { data, error } = await supabase
+      .from("wholesale_customers")
+      .upsert({
+        customer_key: row.key,
+        customer_name: row.customer_name,
+        customer_phone: row.customer_phone || null,
+        category,
+        notes: notes.trim() || null,
+        updated_by: session.user.id,
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+    setBusy(false);
+    message(error, "Clasificación guardada");
+    if (!error)
+      setWholesaleTags((all) => [...all.filter((t) => t.customer_key !== data.customer_key), data]);
+    return !error;
+  }
+  async function removeWholesaleTag(row) {
+    setBusy(true);
+    const { error } = await supabase.from("wholesale_customers").delete().eq("customer_key", row.key);
+    setBusy(false);
+    message(error, "Clasificación quitada");
+    if (!error) setWholesaleTags((all) => all.filter((t) => t.customer_key !== row.key));
+    return !error;
   }
   // Devuelve el id del proveedor elegido; si se escribió uno nuevo, lo crea.
   // undefined = no se pudo crear (el error ya se mostró).
@@ -790,6 +834,7 @@ function App() {
             ...(seesProduction ? [["production", Factory, "Producción"]] : []),
             ["orders", ShoppingBag, "Pedidos"],
             ...(canBill ? [["billing", Receipt, "Facturación"]] : []),
+            ...(admin ? [["wholesalers", Store, "Mayoristas"]] : []),
             ["products", Package, "Productos"],
             ...(admin ? [["settlement", Calculator, "Liquidación"]] : []),
             ...(admin ? [["sellers", Users, "Usuarios y roles"]] : []),
@@ -838,6 +883,7 @@ function App() {
                   products: "Productos",
                   sellers: "Vendedores",
                   billing: "Facturación",
+                  wholesalers: "Mayoristas",
                   settlement: "Liquidación de proveedores",
                 }[tab]
               }
@@ -906,6 +952,16 @@ function App() {
             products={products}
             zones={zones}
             invoices={invoices}
+          />
+        )}
+        {tab === "wholesalers" && admin && (
+          <Wholesalers
+            orders={activeOrders}
+            tags={wholesaleTags}
+            tagsError={wholesaleError}
+            busy={busy}
+            onSave={saveWholesaleTag}
+            onRemove={removeWholesaleTag}
           />
         )}
         {tab === "settlement" && admin && (
@@ -4769,6 +4825,338 @@ function VoidInvoiceModal({ inv, onConfirm, onClose }) {
 // filtros, tabla paginada y resumen en un panel lateral ancho (encima de
 // la página, sin estrechar la tabla). Generar/anular siguen igual.
 // ---------------------------------------------------------------------
+// ---------------------------------------------------------------------
+// Mayoristas: clientes con pedidos a precio mayorista, clasificados a mano
+// por el Administrador (tabla wholesale_customers, migración 20261127).
+// ---------------------------------------------------------------------
+const WHOLESALE_CATS = [
+  ["distribuidor", "Distribuidor", Truck, "tone-info"],
+  ["tienda", "Tienda", Store, "tone-success"],
+  ["revendedor", "Revendedor", Repeat2, ""],
+  ["empresa", "Empresa", Building2, "tone-company"],
+  ["otro", "Otro", Tag, "tone-neutral"],
+];
+const WHOLESALE_CAT = Object.fromEntries(WHOLESALE_CATS.map(([v, l]) => [v, l]));
+// Clave del cliente: teléfono (solo dígitos, últimos 10) o nombre normalizado.
+// Es la customer_key de wholesale_customers: no cambiarla sin migrar los datos.
+function customerKey(name, phone) {
+  const d = String(phone || "").replace(/\D/g, "");
+  if (d.length >= 7) return "tel:" + d.slice(-10);
+  return "nom:" + String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+function Wholesalers({ orders, tags, tagsError, busy, onSave, onRemove }) {
+  const [query, setQuery] = useState(""),
+    [cat, setCat] = useState(""),
+    [sort, setSort] = useState({ key: "total", dir: "desc" }),
+    [page, setPage] = useState(1),
+    [pageSize, setPageSize] = useState(10),
+    [editKey, setEditKey] = useState(null);
+
+  const tagByKey = new Map(tags.map((t) => [t.customer_key, t]));
+  const groups = new Map();
+  for (const o of orders) {
+    if (!o.wholesale) continue;
+    const key = customerKey(o.customer_name, o.customer_phone);
+    const g = groups.get(key) || { key, count: 0, total: 0, last: "", lastNumber: null, customer_phone: "" };
+    g.count += 1;
+    g.total += orderGrandTotal(o);
+    if (o.created_at > g.last) {
+      g.last = o.created_at;
+      g.lastNumber = o.order_number;
+      g.customer_name = o.customer_name;
+      g.customer_phone = o.customer_phone || g.customer_phone;
+    }
+    groups.set(key, g);
+  }
+  const rows = [...groups.values()].map((g) => {
+    const t = tagByKey.get(g.key);
+    return {
+      ...g,
+      category: t?.category || "",
+      categoryLabel: t ? WHOLESALE_CAT[t.category] || t.category : "",
+      notes: t?.notes || "",
+      tagged: !!t,
+    };
+  });
+  const countOf = (c) => rows.filter((r) => (c === "none" ? !r.tagged : r.category === c)).length;
+  const kpis = [["none", "Sin clasificar", CircleHelp, "tone-warning"], ...WHOLESALE_CATS];
+
+  const q = query.trim().toLowerCase();
+  const qDigits = q.replace(/\D/g, "");
+  const filtered = rows.filter((r) => {
+    if (cat === "none" ? r.tagged : cat && r.category !== cat) return false;
+    if (!q) return true;
+    return (
+      r.customer_name.toLowerCase().includes(q) ||
+      r.notes.toLowerCase().includes(q) ||
+      (qDigits.length >= 3 && String(r.customer_phone).replace(/\D/g, "").includes(qDigits))
+    );
+  });
+  const sorted = sortRows(filtered, sort);
+  const total = sorted.length;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const current = Math.min(page, pages);
+  const visible = sorted.slice((current - 1) * pageSize, current * pageSize);
+  const from = total ? (current - 1) * pageSize + 1 : 0;
+  const to = Math.min(current * pageSize, total);
+  useEffect(() => setPage(1), [query, cat, pageSize]);
+
+  const editRow = editKey ? rows.find((r) => r.key === editKey) : null;
+  const columns = [
+    ["customer_name", "Cliente", ""],
+    ["count", "Pedidos mayoristas", "num"],
+    ["total", "Total comprado", "num"],
+    ["last", "Última compra", ""],
+    ["categoryLabel", "Categoría", ""],
+  ];
+  const catPill = (r) =>
+    r.tagged ? (
+      <span className={"pill wcat wcat-" + r.category}>{r.categoryLabel}</span>
+    ) : (
+      <span className="pill pay-pending">Sin clasificar</span>
+    );
+  const empty = rows.length ? "Ningún mayorista coincide con los filtros." : "Aún no hay pedidos con precio mayorista.";
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+
+  return (
+    <div className="billing wholesalers">
+      {tagsError && (
+        <div className="alert error" role="alert">
+          No se pudieron leer las clasificaciones ({tagsError}). Si la migración
+          20261127_wholesale_customers.sql no está aplicada, hay que ejecutarla en Supabase.
+        </div>
+      )}
+      <div className="okpis wkpis">
+        {kpis.map(([k, label, Icon, tone]) => {
+          const n = countOf(k);
+          return (
+            <button
+              type="button"
+              key={k}
+              className={"okpi " + tone + (cat === k ? " on" : "")}
+              aria-pressed={cat === k}
+              aria-label={`${label}: ${n}`}
+              onClick={() => setCat(cat === k ? "" : k)}
+            >
+              <span className="okpi-icon" aria-hidden="true">
+                <Icon size={24} />
+              </span>
+              <span className="okpi-text" aria-hidden="true">
+                <small>{label}</small>
+                <strong>{n}</strong>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <section className="panel ofilters">
+        <div className="ofilters-top">
+          <label className="plist-search">
+            <Search size={18} aria-hidden="true" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Buscar cliente, teléfono o nota…"
+              aria-label="Buscar mayorista por nombre, teléfono o nota"
+            />
+          </label>
+          <select className="wcat-filter" value={cat} onChange={(e) => setCat(e.target.value)} aria-label="Filtrar por categoría">
+            <option value="">Todas las categorías ({rows.length})</option>
+            <option value="none">Sin clasificar ({countOf("none")})</option>
+            {WHOLESALE_CATS.map(([v, l]) => (
+              <option key={v} value={v}>
+                {l} ({countOf(v)})
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="linkbtn oclear"
+            disabled={!query && !cat}
+            onClick={() => {
+              setQuery("");
+              setCat("");
+            }}
+          >
+            <RotateCcw size={16} aria-hidden="true" /> Limpiar filtros
+          </button>
+        </div>
+      </section>
+      <section className="panel olist">
+        <div className="tablewrap">
+          <table className="plist-table otable btable">
+            <thead>
+              <tr>
+                {columns.map(([key, label, cls]) => (
+                  <SortTh key={key} sortKey={key} label={label} className={cls} sort={sort} onSort={setSort} />
+                ))}
+                <th>Notas</th>
+                <th className="plist-actions-h">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((r) => (
+                <tr key={r.key} onClick={() => setEditKey(r.key)}>
+                  <td>
+                    <span className="ocust">{r.customer_name}</span>
+                    <small className="plist-sku">{r.customer_phone || "Sin teléfono"}</small>
+                  </td>
+                  <td className="num">{r.count}</td>
+                  <td className="num plist-money">{fmtMoney(r.total)}</td>
+                  <td className="onowrap">
+                    {fmtDate(r.last.slice(0, 10))}
+                    <small className="plist-sku">Pedido #{r.lastNumber}</small>
+                  </td>
+                  <td>{catPill(r)}</td>
+                  <td className="wnotes">{r.notes || <span className="omuted">—</span>}</td>
+                  <td>
+                    <div className="plist-actions bactions">
+                      <button
+                        type="button"
+                        className="secondary compact"
+                        disabled={busy}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditKey(r.key);
+                        }}
+                      >
+                        <Pencil size={15} aria-hidden="true" /> Clasificar
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {!visible.length && (
+                <tr>
+                  <td colSpan={columns.length + 2} className="plist-empty">
+                    {empty}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {/* Móvil: tarjetas en lugar de tabla; tocar abre la clasificación. */}
+        <ul className="bcards" aria-label="Mayoristas">
+          {visible.map((r) => (
+            <li key={r.key}>
+              <button type="button" className={"bcard " + (r.tagged ? "is-invoiced" : "is-todo")} onClick={() => setEditKey(r.key)}>
+                <span className="bcard-main">
+                  <b>{r.customer_name}</b>
+                  <small>{r.customer_phone || "Sin teléfono"}</small>
+                  <small>
+                    {plural(r.count, "pedido")} · última {fmtDate(r.last.slice(0, 10))}
+                  </small>
+                  <span className="bcard-tags">{catPill(r)}</span>
+                </span>
+                <span className="bcard-side">
+                  <strong>{fmtMoney(r.total)}</strong>
+                </span>
+                <ChevronRight size={22} aria-hidden="true" className="bcard-go" />
+              </button>
+            </li>
+          ))}
+          {!visible.length && <li className="plist-empty">{empty}</li>}
+        </ul>
+        <footer className="plist-foot">
+          <span className="pager-info">
+            Mostrando {from} – {to} de {total}
+          </span>
+          <PageNav page={current} pages={pages} onPage={setPage} label="Paginación de mayoristas" />
+          <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} aria-label="Filas por página">
+            {[10, 25, 50].map((n) => (
+              <option key={n} value={n}>
+                {n} por página
+              </option>
+            ))}
+          </select>
+        </footer>
+      </section>
+
+      {editRow && (
+        <WholesaleTagModal
+          row={editRow}
+          busy={busy}
+          disabled={!!tagsError}
+          onClose={() => setEditKey(null)}
+          onSave={async (category, notes) => {
+            if (await onSave(editRow, category, notes)) setEditKey(null);
+          }}
+          onRemove={async () => {
+            if (await onRemove(editRow)) setEditKey(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+function WholesaleTagModal({ row, busy, disabled, onClose, onSave, onRemove }) {
+  const [category, setCategory] = useState(row.category || ""),
+    [notes, setNotes] = useState(row.notes || ""),
+    [confirmRemove, setConfirmRemove] = useState(false);
+  const changed = category !== (row.category || "") || notes.trim() !== (row.notes || "");
+  return (
+    <Modal
+      title={"Clasificar · " + row.customer_name}
+      onClose={onClose}
+      footer={
+        <>
+          {row.tagged &&
+            (confirmRemove ? (
+              <button type="button" className="dangerbtn solid" disabled={busy} onClick={onRemove}>
+                Sí, quitar clasificación
+              </button>
+            ) : (
+              <button type="button" className="secondary dangerbtn" disabled={busy || disabled} onClick={() => setConfirmRemove(true)}>
+                Quitar clasificación
+              </button>
+            ))}
+          <button type="button" className="secondary" onClick={onClose}>
+            Cancelar
+          </button>
+          <button type="button" disabled={busy || disabled || !category || !changed} onClick={() => onSave(category, notes)}>
+            {busy && <Loader2 size={16} className="spin" aria-hidden="true" />} Guardar
+          </button>
+        </>
+      }
+    >
+      <p className="omuted">
+        {row.customer_phone || "Sin teléfono"} · {row.count} pedido{row.count === 1 ? "" : "s"} mayorista
+        {row.count === 1 ? "" : "s"} · {fmtMoney(row.total)}
+      </p>
+      {disabled && (
+        <div className="alert error" role="alert">
+          La tabla de clasificaciones no está disponible; no se puede guardar.
+        </div>
+      )}
+      <fieldset className="wcat-pick">
+        <legend>Categoría</legend>
+        {WHOLESALE_CATS.map(([v, l, Icon]) => (
+          <label key={v} className={"wcat-opt" + (category === v ? " on" : "")}>
+            <input type="radio" name="wcat" value={v} checked={category === v} onChange={() => setCategory(v)} />
+            <Icon size={18} aria-hidden="true" /> {l}
+          </label>
+        ))}
+      </fieldset>
+      <label className="wnotes-field">
+        Notas (opcional)
+        <textarea
+          rows={3}
+          maxLength={500}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="Ej.: compra cada mes, prefiere entrega en Chía…"
+        />
+      </label>
+      {confirmRemove && (
+        <div className="alert error" role="alert">
+          Se borran la categoría y las notas de este cliente. Sus pedidos no cambian.
+        </div>
+      )}
+    </Modal>
+  );
+}
 const BILL_STATE = {
   todo: ["Por facturar", "pay-pending"],
   invoiced: ["Facturada", "pay-partial"],
