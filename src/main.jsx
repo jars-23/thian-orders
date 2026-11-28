@@ -937,6 +937,7 @@ function App() {
     };
   };
   const priceCtx = { specialFor };
+  const isWholesaleMe = !!specialFor(session?.user?.id);
   const counts = { pending: 0, in_progress: 0, finished: 0 };
   activeOrders.forEach((o) => o.order_items?.forEach((i) => counts[i.status]++));
   const initials =
@@ -1007,6 +1008,8 @@ function App() {
             ...(admin ? [["dashboard", LayoutDashboard, "Resumen"]] : []),
             ...(seesProduction ? [["production", Factory, "Producción"]] : []),
             ["orders", ShoppingBag, "Pedidos"],
+            // Vendedor mayorista: su estado de cuenta (lo que debe por sus pedidos).
+            ...(!admin && isWholesaleMe ? [["account", Receipt, "Mi cuenta"]] : []),
             ...(canBill ? [["billing", Receipt, "Facturación"]] : []),
             ...(admin ? [["wholesalers", Store, "Mayoristas"]] : []),
             ["products", Package, "Productos"],
@@ -1069,6 +1072,7 @@ function App() {
                   billing: "Facturación",
                   wholesalers: "Mayoristas",
                   settlement: "Liquidación de proveedores",
+                  account: "Mi cuenta",
                 }[tab]
               }
             </h1>
@@ -1138,6 +1142,17 @@ function App() {
             invoices={invoices}
           />
         )}
+        {tab === "account" && !admin && isWholesaleMe && (
+          <section className="panel wst-panel">
+            <WholesaleStatement
+              seller={profile}
+              orders={orders}
+              listName={specialFor(profile.id)?.name || ""}
+              viewer="seller"
+              showInvoices={false}
+            />
+          </section>
+        )}
         {tab === "wholesalers" && admin && (
           <Wholesalers
             orders={activeOrders}
@@ -1156,6 +1171,7 @@ function App() {
             products={products}
             priceItems={priceItems}
             onSavePrices={savePriceItems}
+            invoices={invoices}
           />
         )}
         {tab === "settlement" && admin && (
@@ -1535,7 +1551,7 @@ function UsernameEditor({ user, busy, onSave }) {
 }
 // Catálogo visual (categorías, búsqueda y tarjetas). Se usa al crear el
 // pedido y en la ventana "Agregar productos" al editarlo.
-function ProductCatalog({ products, inCart, onAdd, titleId, title = "Catálogo", special = null }) {
+function ProductCatalog({ products, inCart, onAdd, titleId, title = "Catálogo", special = null, readOnly = false }) {
   const [cat, setCat] = useState("all");
   const [query, setQuery] = useState("");
   const catOf = (p) => p.category || "Otros";
@@ -1635,6 +1651,7 @@ function ProductCatalog({ products, inCart, onAdd, titleId, title = "Catálogo",
                           </>
                         )}
                       </div>
+                      {!readOnly && (
                       <button
                         type="button"
                         className="compact"
@@ -1643,6 +1660,7 @@ function ProductCatalog({ products, inCart, onAdd, titleId, title = "Catálogo",
                       >
                         <Plus size={16} aria-hidden="true" /> Agregar
                       </button>
+                      )}
                     </div>
                   </div>
                 </article>
@@ -5514,9 +5532,12 @@ function Wholesalers(props) {
     </>
   );
 }
-function WholesaleSellers({ orders, sellers, priceLists, sellerLists, listsError, busy, onCreateList, onUpdateList, onAssign, products = [], priceItems = [], onSavePrices }) {
+function WholesaleSellers({ orders, sellers, priceLists, sellerLists, listsError, busy, onCreateList, onUpdateList, onAssign, products = [], priceItems = [], onSavePrices, invoices = [] }) {
   const [pricesOf, setPricesOf] = useState(null), // lista abierta para editar precios
-    [importing, setImporting] = useState(false);
+    [importing, setImporting] = useState(false),
+    [statementOf, setStatementOf] = useState(null), // vendedor con estado de cuenta abierto
+    [viewAs, setViewAs] = useState(null); // vendedor en «Ver como»
+  const { specialFor } = React.useContext(PriceListCtx);
   const [newName, setNewName] = useState(""),
     [editId, setEditId] = useState(null),
     [editName, setEditName] = useState(""),
@@ -5693,6 +5714,16 @@ function WholesaleSellers({ orders, sellers, priceLists, sellerLists, listsError
                   </select>
                 </label>
                 {current && <span className="pill wcat-revendedor wseller-tag">{current.name}</span>}
+                {current && (
+                  <span className="wseller-actions">
+                    <button type="button" className="secondary compact" onClick={() => setStatementOf(u)}>
+                      <Receipt size={15} aria-hidden="true" /> Estado de cuenta
+                    </button>
+                    <button type="button" className="secondary compact" onClick={() => setViewAs(u)}>
+                      <Eye size={15} aria-hidden="true" /> Ver como {(u.full_name || u.username).split(" ")[0]}
+                    </button>
+                  </span>
+                )}
               </li>
             );
           })}
@@ -5710,6 +5741,20 @@ function WholesaleSellers({ orders, sellers, priceLists, sellerLists, listsError
             if (await onSavePrices(up, del)) setPricesOf(null);
           }}
         />
+      )}
+      {statementOf && (
+        <Modal title={"Estado de cuenta · " + (statementOf.full_name || statementOf.username)} onClose={() => setStatementOf(null)}>
+          <WholesaleStatement
+            seller={statementOf}
+            orders={orders}
+            invoices={invoices}
+            listName={specialFor(statementOf.id)?.name || ""}
+            viewer="admin"
+          />
+        </Modal>
+      )}
+      {viewAs && (
+        <WholesaleViewAs seller={viewAs} orders={orders} special={specialFor(viewAs.id)} products={products} onClose={() => setViewAs(null)} />
       )}
       {importing && (
         <PriceImportModal
@@ -5846,6 +5891,198 @@ function buildPriceImport(rows, products, priceLists, priceItems) {
 
 const PRICE_KIND = { new: ["Nuevo", "pay-paid"], change: ["Cambia", "pay-partial"], remove: ["Se quita", "cancelled-pill"] };
 
+// ---------------------------------------------------------------------
+// Estado de cuenta del mayorista (modelo «compra y revende»): lo que debe =
+// total de sus pedidos no cancelados − lo abonado. Solo lectura; usa los
+// mismos totales que el resto de la app (orderGrandTotal, amount_paid).
+// viewer: "admin" (te debe) | "seller" (Mi cuenta: debes).
+// ---------------------------------------------------------------------
+function WholesaleStatement({ seller, orders, invoices = [], listName = "", viewer = "admin", showInvoices = true }) {
+  const [period, setPeriod] = useState("all"),
+    [onlyOwed, setOnlyOwed] = useState(false);
+  const now = new Date();
+  const monthKey = (d) => d.getFullYear() * 12 + d.getMonth();
+  const thisMonth = monthKey(now);
+  const invByOrder = new Map(invoices.filter((i) => !i.voided_at).map((i) => [i.order_id, i]));
+  const all = orders
+    .filter((o) => o.seller_id === seller.id && !o.cancelled_at)
+    .map((o) => {
+      const total = orderGrandTotal(o);
+      const paid = Math.min(o.amount_paid || 0, total);
+      return {
+        id: o.id,
+        order_number: o.order_number,
+        created_at: o.created_at,
+        customer_name: o.customer_name,
+        total,
+        paid,
+        balance: total - paid,
+        listLines: (o.order_items || []).filter((i) => i.list_price != null).length,
+        invoice: invByOrder.get(o.id) || null,
+      };
+    })
+    .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+  const rows = all.filter((r) => {
+    const m = monthKey(new Date(r.created_at));
+    if (period === "this" && m !== thisMonth) return false;
+    if (period === "last" && m !== thisMonth - 1) return false;
+    return !onlyOwed || r.balance > 0;
+  });
+  const sum = (k) => rows.reduce((s, r) => s + r[k], 0);
+  const owedAll = all.reduce((s, r) => s + r.balance, 0);
+  const who = seller.full_name || seller.username || "Mayorista";
+  const exportXlsx = () => {
+    const data = [
+      ["Pedido", "Fecha", "Cliente", "Total", "Abonado", "Saldo", ...(showInvoices ? ["Factura"] : [])],
+      ...rows.map((r) => [
+        r.order_number,
+        new Date(r.created_at).toLocaleDateString("es-CO"),
+        r.customer_name,
+        r.total,
+        r.paid,
+        r.balance,
+        ...(showInvoices ? [r.invoice ? fmtInvoice(r.invoice.invoice_number) : "Sin factura"] : []),
+      ]),
+      [],
+      ["", "", "Totales", sum("total"), sum("paid"), sum("balance")],
+    ];
+    downloadBlob(
+      writeXlsx(data, { sheetName: "Estado de cuenta", widths: [10, 12, 32, 14, 14, 14, 14] }),
+      `estado-cuenta-${(seller.username || "mayorista").replace(/[^\w.-]/g, "")}-${new Date().toLocaleDateString("en-CA")}.xlsx`,
+    );
+  };
+  return (
+    <div className="wstatement">
+      <p className="omuted wst-who">
+        {who}
+        {listName && <> · lista <b>{listName}</b></>} · {all.length} pedido{all.length === 1 ? "" : "s"} · saldo total{" "}
+        <b>{fmtMoney(owedAll)}</b>
+      </p>
+      <div className="wst-kpis" role="group" aria-label="Resumen del período">
+        <div className="wst-kpi">
+          <small>Comprado</small>
+          <strong>{fmtMoney(sum("total"))}</strong>
+        </div>
+        <div className="wst-kpi">
+          <small>Pagado</small>
+          <strong>{fmtMoney(sum("paid"))}</strong>
+        </div>
+        <div className={"wst-kpi is-owed" + (sum("balance") > 0 ? " on" : "")}>
+          <small>{viewer === "seller" ? "Saldo por pagar" : "Te debe"}</small>
+          <strong>{fmtMoney(sum("balance"))}</strong>
+        </div>
+      </div>
+      <div className="wst-tools">
+        <select value={period} onChange={(e) => setPeriod(e.target.value)} aria-label="Período">
+          <option value="all">Todo</option>
+          <option value="this">Este mes</option>
+          <option value="last">Mes anterior</option>
+        </select>
+        <label className="pw-show">
+          <input type="checkbox" checked={onlyOwed} onChange={(e) => setOnlyOwed(e.target.checked)} /> Solo con saldo
+        </label>
+        <button type="button" className="secondary compact" disabled={!rows.length} onClick={exportXlsx}>
+          <Download size={16} aria-hidden="true" /> Exportar Excel
+        </button>
+      </div>
+      <div className="tablewrap wst-table">
+        <table className="plist-table">
+          <thead>
+            <tr>
+              <th>Pedido</th>
+              <th>Cliente</th>
+              <th className="num">Total</th>
+              <th className="num">Abonado</th>
+              <th className="num">Saldo</th>
+              {showInvoices && <th>Factura</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td className="onowrap">
+                  <b>#{r.order_number}</b>
+                  <small className="plist-sku">{new Date(r.created_at).toLocaleDateString("es-CO")}</small>
+                </td>
+                <td>
+                  {r.customer_name}
+                  {r.listLines > 0 && listName && <small className="plist-sku">Precio de lista</small>}
+                </td>
+                <td className="num">{fmtMoney(r.total)}</td>
+                <td className="num">{fmtMoney(r.paid)}</td>
+                <td className={"num" + (r.balance > 0 ? " bsaldo" : "")}>{fmtMoney(r.balance)}</td>
+                {showInvoices && (
+                  <td>{r.invoice ? fmtInvoice(r.invoice.invoice_number) : <span className="omuted">Sin factura</span>}</td>
+                )}
+              </tr>
+            ))}
+            {!rows.length && (
+              <tr>
+                <td colSpan={showInvoices ? 6 : 5} className="plist-empty">
+                  {all.length ? "Ningún pedido en este período." : "Aún no hay pedidos."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+          {rows.length > 0 && (
+            <tfoot>
+              <tr>
+                <td colSpan={2}>
+                  <b>Totales</b>
+                </td>
+                <td className="num">
+                  <b>{fmtMoney(sum("total"))}</b>
+                </td>
+                <td className="num">
+                  <b>{fmtMoney(sum("paid"))}</b>
+                </td>
+                <td className="num">
+                  <b>{fmtMoney(sum("balance"))}</b>
+                </td>
+                {showInvoices && <td />}
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
+  );
+}
+// «Ver como» (solo admin): catálogo con su lista + su cuenta, solo lectura.
+function WholesaleViewAs({ seller, orders, special, products, onClose }) {
+  const [view, setView] = useState("catalog");
+  const who = seller.full_name || seller.username;
+  return (
+    <Modal title={"Vista de " + who} onClose={onClose}>
+      <div className="alert info wviewas-note">
+        Vista de solo lectura: así ve {who} su catálogo y su cuenta. No se puede crear pedidos ni pagar desde aquí.
+      </div>
+      <div className="seg wtabs" role="group" aria-label="Qué ver">
+        <button type="button" className={view === "catalog" ? "is-active" : ""} aria-pressed={view === "catalog"} onClick={() => setView("catalog")}>
+          Catálogo
+        </button>
+        <button type="button" className={view === "account" ? "is-active" : ""} aria-pressed={view === "account"} onClick={() => setView("account")}>
+          Mi cuenta
+        </button>
+      </div>
+      {view === "catalog" ? (
+        <div className="wviewas-catalog">
+          <ProductCatalog
+            products={products.filter((p) => p.active)}
+            inCart={() => 0}
+            onAdd={() => {}}
+            readOnly
+            special={special}
+            titleId={"viewas-" + seller.id}
+            title={special ? "Catálogo · " + special.name : "Catálogo"}
+          />
+        </div>
+      ) : (
+        <WholesaleStatement seller={seller} orders={orders} listName={special?.name || ""} viewer="seller" showInvoices={false} />
+      )}
+    </Modal>
+  );
+}
 function PriceImportModal({ products, priceLists, priceItems, busy, onClose, onApply }) {
   const [fileName, setFileName] = useState(""),
     [result, setResult] = useState(null),
