@@ -61,3 +61,8 @@ Formato: **síntoma · causa · solución** (3 líneas). Ver [[arquitectura]] y 
 - **Síntoma:** un botón con estilo propio (tarjeta, chip, icono) se pone naranja al pasar el ratón.
 - **Causa:** `button:hover:not(:disabled)` (`src/style.css:91`) pesa (0,2,1); `.miclase:hover` solo (0,2,0).
 - **Solución:** escribir `.miclase:hover:not(:disabled)`. Ojo: `.iconbtn` ya existe (botón quitar del carrito, hover rojo); acotar con el contenedor (`.plist-actions .iconbtn`).
+
+## T13 · Las clases `st-<estado>` son compartidas
+- **Síntoma:** en el detalle de producción, el producto finalizado sale con fondo verde oscuro y el texto no se lee.
+- **Causa:** el tablero usaba `.st-pending/.st-progress/.st-finished` sueltas para el gráfico; el detalle (`pd-item st-<estado>`), las miniaturas (`pc-thumb`) y el selector de estado usan los mismos nombres.
+- **Solución:** acotar siempre con el contenedor (`.stackbar .st-finished`, `.pd-item.st-finished`). No crear reglas `.st-*` sueltas.
