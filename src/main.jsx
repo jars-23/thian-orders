@@ -59,6 +59,7 @@ import {
   Tag,
   CircleHelp,
   KeyRound,
+  Lock,
 } from "lucide-react";
 import "./style.css";
 import { ThemeProvider, CssBaseline } from "@mui/material";
@@ -2161,7 +2162,9 @@ function Lightbox({ photo, onClose }) {
   );
 }
 // Editar datos del pedido. El pago solo lo ven Administrador y Facturación.
-function OrderEditForm({ order, products = [], zones = [], invoiced = false, canBill, admin = false, onSave, onCancel }) {
+function OrderEditForm({ order, products = [], zones = [], invoiced = false, invoice = null, canBill, admin = false, onSave, onCancel }) {
+  // Texto de la factura que bloquea productos y domicilio.
+  const invoiceLabel = invoice ? fmtInvoice(invoice.invoice_number) : "la factura activa";
   const byId = new Map(products.map((p) => [p.id, p]));
   // Lista de precios del vendedor del pedido (la misma que usa update_order).
   const special = React.useContext(PriceListCtx).specialFor(order.seller_id);
@@ -2354,6 +2357,7 @@ function OrderEditForm({ order, products = [], zones = [], invoiced = false, can
             <select
               value={zone}
               disabled={invoiced}
+              title={invoiced ? "Bloqueado por " + invoiceLabel : undefined}
               onChange={(e) => setZone(e.target.value)}
             >
               {!order.delivery_zone && (
@@ -2371,13 +2375,32 @@ function OrderEditForm({ order, products = [], zones = [], invoiced = false, can
         )}
       </div>
       {invoiced && (
-        <p className="fieldhelp">
-          Este pedido ya está facturado: los productos y el domicilio no se
-          pueden cambiar.
-        </p>
+        <div className="invlock" role="note">
+          <Lock size={18} aria-hidden="true" />
+          <p>
+            <b>Bloqueado por {invoiceLabel}</b>
+            {invoice?.created_at && <> (generada el {new Date(invoice.created_at).toLocaleDateString("es-CO")})</>}.
+            {" "}Los productos y el domicilio no se pueden cambiar mientras la factura esté activa.
+            {admin
+              ? " Para cambiarlos: Facturación → Anular factura, edita el pedido y vuelve a facturar."
+              : " Para cambiarlos, pide al administrador que anule la factura."}
+            {" "}Cliente, teléfono y dirección sí se pueden editar.
+          </p>
+        </div>
       )}
-      <fieldset className="edititems" disabled={invoiced}>
-        <legend>Productos del pedido</legend>
+      <fieldset
+        className={"edititems" + (invoiced ? " is-locked" : "")}
+        disabled={invoiced}
+        title={invoiced ? "Bloqueado por " + invoiceLabel : undefined}
+      >
+        <legend>
+          Productos del pedido
+          {invoiced && (
+            <span className="invlock-tag">
+              <Lock size={12} aria-hidden="true" /> {invoiceLabel}
+            </span>
+          )}
+        </legend>
         <ul>
           {items.map((x) => {
             const locked = x.id && x.status !== "pending";
@@ -3158,6 +3181,7 @@ function Orders({ orders, busy, canBill, admin = false, userId, canSell, onEdit,
               products={products}
               zones={zones}
               invoiced={invoiceOf.has(o.id)}
+              invoice={invoiceOf.get(o.id) || null}
               canBill={canBill}
               admin={admin}
               onSave={onEdit}
@@ -3793,6 +3817,7 @@ function OrdersBoard({
             products={products}
             zones={zones}
             invoiced={invoiceOf.has(fullOrder.id)}
+            invoice={invoiceOf.get(fullOrder.id) || null}
             canBill={canBill}
             admin={admin}
             onSave={onEdit}

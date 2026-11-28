@@ -2162,3 +2162,19 @@ tr.is-inactive .plist-thumb { opacity: .55 }
   .wst-kpi { display: flex; justify-content: space-between; align-items: center }
   .wst-kpi strong { font-size: 1.1rem }
 }
+
+/* ===== Pedido facturado: bloqueo visible por la factura ===== */
+.invlock {
+  display: flex; align-items: flex-start; gap: 10px; margin: 4px 0 12px; padding: 10px 14px;
+  border: 1px solid var(--info-bg); border-left: 4px solid var(--info); border-radius: var(--radius);
+  background: var(--info-bg); color: var(--info); font-size: .9rem;
+}
+.invlock svg { flex: none; margin-top: 2px }
+.invlock p { margin: 0; color: var(--text) }
+.invlock-tag {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; padding: 1px 8px;
+  border-radius: 999px; background: var(--info-bg); color: var(--info); font-size: .75rem; font-weight: 600;
+}
+.edititems.is-locked li { background: var(--surface-muted) }
+.edititems.is-locked li > *:not(.edititem-info) { opacity: .45 }
+.edititems.is-locked button, .edititems.is-locked input { cursor: not-allowed }
