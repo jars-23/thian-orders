@@ -2070,3 +2070,33 @@ tr.is-inactive .plist-thumb { opacity: .55 }
   .wholesalers .wcat-filter { width: 100%; min-width: 0 }
   .wholesalers .ofilters-top { flex-wrap: wrap }
 }
+
+/* ===== Mayoristas: pestañas y vendedores mayoristas (listas de precios, fase 1) ===== */
+.wtabs { margin-bottom: 14px }
+.wlists { padding: 18px }
+.wlists-head h2 { margin: 0 0 4px; font-size: 1.1rem }
+.wlists-head p { margin: 0 0 12px }
+.wlist-items { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px }
+.wlist-items > li {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+}
+.wlist-items > li.is-inactive { opacity: .65 }
+.wlist-name { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap }
+.wlist-actions, .wlist-edit, .wlist-new { display: flex; align-items: center; gap: 8px; flex-wrap: wrap }
+.wlist-edit input, .wlist-new input { flex: 1 1 200px; min-width: 0 }
+.wlist-edit { flex: 1 1 100% }
+.wsellers { list-style: none; margin: 0; padding: 0 }
+.wseller {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 240px) auto; align-items: center; gap: 12px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border); border-left: 4px solid transparent;
+}
+.wseller:last-child { border-bottom: 0 }
+.wseller.is-wholesale { border-left-color: var(--brand-orange) }
+.wseller-main { display: grid; gap: 2px; min-width: 0 }
+.wseller-main b { overflow-wrap: anywhere }
+.wseller-pick select { width: 100% }
+@media (max-width: 760px) {
+  .wseller { grid-template-columns: minmax(0, 1fr) auto; padding: 12px }
+  .wseller-pick { grid-column: 1 / -1; grid-row: 2 }
+}

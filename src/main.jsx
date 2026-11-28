@@ -157,6 +157,9 @@ function App() {
     [invoices, setInvoices] = useState([]),
     [wholesaleTags, setWholesaleTags] = useState([]),
     [wholesaleError, setWholesaleError] = useState(""),
+    [priceLists, setPriceLists] = useState([]),
+    [sellerLists, setSellerLists] = useState([]),
+    [listsError, setListsError] = useState(""),
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -248,7 +251,7 @@ function App() {
   async function reload() {
     if (!profile?.active) return;
     setBusy(true);
-    const [p, o, sn, s, r, ur, z, inv, sup, pc, wc] = await Promise.all([
+    const [p, o, sn, s, r, ur, z, inv, sup, pc, wc, pl, spl] = await Promise.all([
       supabase
         .from("products")
         .select("*")
@@ -288,6 +291,12 @@ function App() {
       admin
         ? supabase.from("wholesale_customers").select("*")
         : Promise.resolve({ data: [], error: null }),
+      admin
+        ? supabase.from("price_lists").select("*").order("name")
+        : Promise.resolve({ data: [], error: null }),
+      admin
+        ? supabase.from("seller_price_lists").select("*")
+        : Promise.resolve({ data: [], error: null }),
     ]);
     const err = p.error || o.error || s.error || r.error || ur.error;
     if (err) message(err);
@@ -322,6 +331,12 @@ function App() {
       if (wc.error) console.warn("wholesale_customers:", wc.error.message);
       setWholesaleError(wc.error ? wc.error.message : "");
       setWholesaleTags(wc.data || []);
+      // Listas de precios (migración 20261127b): si faltan, solo esa pestaña avisa.
+      const plErr = pl.error || spl.error;
+      if (plErr) console.warn("price_lists:", plErr.message);
+      setListsError(plErr ? plErr.message : "");
+      setPriceLists(pl.data || []);
+      setSellerLists(spl.data || []);
     }
     setBusy(false);
   }
@@ -466,6 +481,44 @@ function App() {
     setBusy(false);
     message(error, "Clasificación quitada");
     if (!error) setWholesaleTags((all) => all.filter((t) => t.customer_key !== row.key));
+    return !error;
+  }
+  // Listas de precios mayoristas (fase 1): crear, renombrar/activar y asignar.
+  async function createPriceList(name) {
+    setBusy(true);
+    const { data, error } = await supabase.from("price_lists").insert({ name }).select().single();
+    setBusy(false);
+    message(error?.code === "23505" ? { message: "Ya existe una lista con ese nombre" } : error, "Lista creada");
+    if (!error) setPriceLists((all) => [...all, data].sort((a, b) => a.name.localeCompare(b.name, "es")));
+    return !error;
+  }
+  async function updatePriceList(id, patch) {
+    setBusy(true);
+    const { data, error } = await supabase.from("price_lists").update(patch).eq("id", id).select().single();
+    setBusy(false);
+    message(error?.code === "23505" ? { message: "Ya existe una lista con ese nombre" } : error, "Lista actualizada");
+    if (!error) setPriceLists((all) => all.map((l) => (l.id === id ? data : l)));
+    return !error;
+  }
+  async function assignPriceList(sellerId, listId) {
+    setBusy(true);
+    const q = listId
+      ? supabase
+          .from("seller_price_lists")
+          .upsert({
+            seller_id: sellerId,
+            price_list_id: listId,
+            assigned_by: session.user.id,
+            assigned_at: new Date().toISOString(),
+          })
+          .select()
+          .single()
+      : supabase.from("seller_price_lists").delete().eq("seller_id", sellerId);
+    const { data, error } = await q;
+    setBusy(false);
+    message(error, listId ? "Vendedor marcado como mayorista" : "El vendedor ya no es mayorista");
+    if (!error)
+      setSellerLists((all) => [...all.filter((x) => x.seller_id !== sellerId), ...(listId ? [data] : [])]);
     return !error;
   }
   // Devuelve el id del proveedor elegido; si se escribió uno nuevo, lo crea.
@@ -962,6 +1015,13 @@ function App() {
             busy={busy}
             onSave={saveWholesaleTag}
             onRemove={removeWholesaleTag}
+            sellers={sellerOptions}
+            priceLists={priceLists}
+            sellerLists={sellerLists}
+            listsError={listsError}
+            onCreateList={createPriceList}
+            onUpdateList={updatePriceList}
+            onAssign={assignPriceList}
           />
         )}
         {tab === "settlement" && admin && (
@@ -4844,7 +4904,7 @@ function customerKey(name, phone) {
   if (d.length >= 7) return "tel:" + d.slice(-10);
   return "nom:" + String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
-function Wholesalers({ orders, tags, tagsError, busy, onSave, onRemove }) {
+function WholesaleCustomers({ orders, tags, tagsError, busy, onSave, onRemove }) {
   const [query, setQuery] = useState(""),
     [cat, setCat] = useState(""),
     [sort, setSort] = useState({ key: "total", dir: "desc" }),
@@ -5088,6 +5148,203 @@ function Wholesalers({ orders, tags, tagsError, busy, onSave, onRemove }) {
           }}
         />
       )}
+    </div>
+  );
+}
+// Mayoristas: pestañas Clientes (clasificación) y Vendedores mayoristas
+// (qué lista de precios tiene cada vendedor; fase 1: aún no cambia precios).
+function Wholesalers(props) {
+  const [view, setView] = useState("customers");
+  return (
+    <>
+      <div className="seg wtabs" role="group" aria-label="Sección de mayoristas">
+        <button type="button" className={view === "customers" ? "is-active" : ""} aria-pressed={view === "customers"} onClick={() => setView("customers")}>
+          Clientes
+        </button>
+        <button type="button" className={view === "sellers" ? "is-active" : ""} aria-pressed={view === "sellers"} onClick={() => setView("sellers")}>
+          Vendedores mayoristas
+        </button>
+      </div>
+      {view === "customers" ? (
+        <WholesaleCustomers {...props} />
+      ) : (
+        <WholesaleSellers {...props} />
+      )}
+    </>
+  );
+}
+function WholesaleSellers({ orders, sellers, priceLists, sellerLists, listsError, busy, onCreateList, onUpdateList, onAssign }) {
+  const [newName, setNewName] = useState(""),
+    [editId, setEditId] = useState(null),
+    [editName, setEditName] = useState(""),
+    [query, setQuery] = useState(""),
+    [only, setOnly] = useState("");
+  const listById = new Map(priceLists.map((l) => [l.id, l]));
+  const listOf = new Map(sellerLists.map((s) => [s.seller_id, s.price_list_id]));
+  const stats = new Map();
+  for (const o of orders) {
+    const st = stats.get(o.seller_id) || { count: 0, total: 0 };
+    st.count += 1;
+    st.total += orderGrandTotal(o);
+    stats.set(o.seller_id, st);
+  }
+  const membersOf = (id) => sellerLists.filter((s) => s.price_list_id === id).length;
+  const q = query.trim().toLowerCase();
+  const rows = sellers
+    .map((u) => ({ ...u, listId: listOf.get(u.id) || "", ...(stats.get(u.id) || { count: 0, total: 0 }) }))
+    .filter((u) => (only === "yes" ? u.listId : only === "no" ? !u.listId : true))
+    .filter((u) => !q || (u.full_name || "").toLowerCase().includes(q) || (u.username || "").toLowerCase().includes(q))
+    .sort((a, b) => b.total - a.total);
+  const wholesaleCount = sellers.filter((u) => listOf.has(u.id)).length;
+  const disabled = busy || !!listsError;
+
+  return (
+    <div className="billing wholesalers">
+      {listsError && (
+        <div className="alert error" role="alert">
+          No se pudieron leer las listas de precios ({listsError}). Si la migración
+          20261127b_price_lists.sql no está aplicada, hay que ejecutarla en Supabase.
+        </div>
+      )}
+      <section className="panel wlists">
+        <div className="wlists-head">
+          <h2>Listas de precios</h2>
+          <p className="omuted">
+            Cada vendedor mayorista tiene una lista. Los precios por producto se cargan en la fase 2; por
+            ahora los pedidos siguen con la regla actual.
+          </p>
+        </div>
+        <ul className="wlist-items">
+          {priceLists.map((l) => (
+            <li key={l.id} className={l.active ? "" : "is-inactive"}>
+              {editId === l.id ? (
+                <form
+                  className="wlist-edit"
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (await onUpdateList(l.id, { name: editName.trim() })) setEditId(null);
+                  }}
+                >
+                  <input value={editName} onChange={(e) => setEditName(e.target.value)} maxLength={60} aria-label="Nombre de la lista" autoFocus />
+                  <button type="submit" className="compact" disabled={disabled || !editName.trim()}>
+                    Guardar
+                  </button>
+                  <button type="button" className="secondary compact" onClick={() => setEditId(null)}>
+                    Cancelar
+                  </button>
+                </form>
+              ) : (
+                <>
+                  <span className="wlist-name">
+                    <Tag size={16} aria-hidden="true" /> <b>{l.name}</b>
+                    <small className="omuted">
+                      {membersOf(l.id)} vendedor{membersOf(l.id) === 1 ? "" : "es"}
+                      {!l.active && " · inactiva"}
+                    </small>
+                  </span>
+                  <span className="wlist-actions">
+                    <button
+                      type="button"
+                      className="iconbtn"
+                      disabled={disabled}
+                      aria-label={`Renombrar ${l.name}`}
+                      title="Renombrar"
+                      onClick={() => {
+                        setEditId(l.id);
+                        setEditName(l.name);
+                      }}
+                    >
+                      <Pencil size={16} aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary compact"
+                      disabled={disabled || (l.active && membersOf(l.id) > 0)}
+                      title={l.active && membersOf(l.id) > 0 ? "Quita primero los vendedores de esta lista" : undefined}
+                      onClick={() => onUpdateList(l.id, { active: !l.active })}
+                    >
+                      {l.active ? "Desactivar" : "Activar"}
+                    </button>
+                  </span>
+                </>
+              )}
+            </li>
+          ))}
+          {!priceLists.length && <li className="omuted">Aún no hay listas. Crea la primera, por ejemplo «Mayorista».</li>}
+        </ul>
+        <form
+          className="wlist-new"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (await onCreateList(newName.trim())) setNewName("");
+          }}
+        >
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            maxLength={60}
+            placeholder="Nombre de la lista nueva"
+            aria-label="Nombre de la lista nueva"
+          />
+          <button type="submit" className="compact" disabled={disabled || !newName.trim()}>
+            <Plus size={16} aria-hidden="true" /> Crear lista
+          </button>
+        </form>
+      </section>
+
+      <section className="panel ofilters">
+        <div className="ofilters-top">
+          <label className="plist-search">
+            <Search size={18} aria-hidden="true" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Buscar vendedor…"
+              aria-label="Buscar vendedor por nombre o usuario"
+            />
+          </label>
+          <select className="wcat-filter" value={only} onChange={(e) => setOnly(e.target.value)} aria-label="Filtrar vendedores">
+            <option value="">Todos los vendedores ({sellers.length})</option>
+            <option value="yes">Mayoristas ({wholesaleCount})</option>
+            <option value="no">No mayoristas ({sellers.length - wholesaleCount})</option>
+          </select>
+        </div>
+      </section>
+
+      <section className="panel">
+        <ul className="wsellers" aria-label="Vendedores">
+          {rows.map((u) => {
+            const current = u.listId ? listById.get(u.listId) : null;
+            return (
+              <li key={u.id} className={"wseller" + (u.listId ? " is-wholesale" : "")}>
+                <span className="wseller-main">
+                  <b>{u.full_name || u.username}</b>
+                  <small className="omuted">
+                    @{u.username} · {u.count} pedido{u.count === 1 ? "" : "s"} · {fmtMoney(u.total)} vendido
+                  </small>
+                </span>
+                <label className="wseller-pick">
+                  <span className="sr-only">Lista de precios de {u.full_name || u.username}</span>
+                  <select value={u.listId} disabled={disabled} onChange={(e) => onAssign(u.id, e.target.value || null)}>
+                    <option value="">No es mayorista</option>
+                    {priceLists
+                      .filter((l) => l.active || l.id === u.listId)
+                      .map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.name}
+                          {!l.active ? " (inactiva)" : ""}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                {current && <span className="pill wcat-revendedor wseller-tag">{current.name}</span>}
+              </li>
+            );
+          })}
+          {!rows.length && <li className="plist-empty">Ningún vendedor coincide.</li>}
+        </ul>
+      </section>
     </div>
   );
 }

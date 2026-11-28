@@ -27,6 +27,8 @@ flowchart LR
 | `suppliers` | Proveedores de los productos; `own` = producción propia (lee: usuario activo; crea/modifica: admin) |
 | `product_costs` | Historial de costos por producto (solo admin). La liquidación usa el vigente en la fecha de la factura |
 | `wholesale_customers` | Categoría manual de cada cliente mayorista (distribuidor, tienda, revendedor, empresa, otro) y notas; clave = teléfono o nombre (`customerKey`). Solo admin (migración 20261127) |
+| `price_lists` | Listas de precios mayoristas (nombre único, activa). Admin crea/modifica; el vendedor lee solo la suya (migración 20261127b) |
+| `seller_price_lists` | Qué lista tiene cada vendedor (una por vendedor) = vendedor mayorista. Admin todo; el vendedor lee su fila. Fase 1: aún no cambia precios |
 | `orders` | Pedido: cliente, entrega, mayorista, pago |
 | `order_items` | Productos del pedido con estado de producción y precio congelado |
 | `order_payments` | Historial de abonos y correcciones |
