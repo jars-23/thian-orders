@@ -58,6 +58,7 @@ import {
   Building2,
   Tag,
   CircleHelp,
+  KeyRound,
 } from "lucide-react";
 import "./style.css";
 import { ThemeProvider, CssBaseline } from "@mui/material";
@@ -160,6 +161,7 @@ function App() {
     [priceLists, setPriceLists] = useState([]),
     [sellerLists, setSellerLists] = useState([]),
     [listsError, setListsError] = useState(""),
+    [pwTarget, setPwTarget] = useState(null), // "self" | perfil de otro usuario
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -422,6 +424,7 @@ function App() {
       password: String(fd.get("password") || ""),
       roles: fd.getAll("roles"),
     };
+    const listId = String(fd.get("price_list_id") || "");
     if (!/^[a-zA-Z0-9._]{4,20}$/.test(payload.username)) {
       setError(
         "Username inválido: entre 4 y 20 caracteres, letras, números, punto o guion bajo.",
@@ -447,11 +450,55 @@ function App() {
       }
       setError(detail);
     } else {
-      setNotice("Usuario creado correctamente.");
+      // Mayorista: se asigna la lista al usuario recién creado (RLS: solo admin).
+      let listError = null;
+      if (listId && data?.id) {
+        ({ error: listError } = await supabase.from("seller_price_lists").upsert({
+          seller_id: data.id,
+          price_list_id: listId,
+          assigned_by: session.user.id,
+          assigned_at: new Date().toISOString(),
+        }));
+      }
+      if (listError)
+        setError(
+          "Usuario creado, pero no se pudo marcar como mayorista: " +
+            listError.message +
+            ". Asígnale la lista desde la tabla.",
+        );
+      else setNotice(listId ? "Usuario mayorista creado correctamente." : "Usuario creado correctamente.");
       form.reset();
       await reload();
     }
     setBusy(false);
+  }
+  // Contraseñas: la propia con la sesión; la de otro usuario vía Edge Function.
+  async function changeOwnPassword(password) {
+    setBusy(true);
+    const { error } = await supabase.auth.updateUser({ password });
+    setBusy(false);
+    if (error) return error.message;
+    message(null, "Contraseña actualizada");
+    return "";
+  }
+  async function adminSetPassword(user, password) {
+    setBusy(true);
+    const { data, error } = await supabase.functions.invoke("admin-set-password", {
+      body: { user_id: user.id, password },
+    });
+    setBusy(false);
+    if (error || data?.error) {
+      let detail = data?.error || "No se pudo cambiar la contraseña (¿está desplegada admin-set-password?).";
+      if (error?.context) {
+        try {
+          const body = await error.context.json();
+          detail = body.error || detail;
+        } catch {}
+      }
+      return detail;
+    }
+    message(null, "Contraseña de " + (user.full_name || user.username) + " actualizada");
+    return "";
   }
   // Mayoristas: guarda o quita la categoría de un cliente (solo admin, RLS).
   async function saveWholesaleTag(row, category, notes) {
@@ -914,6 +961,16 @@ function App() {
           })}
         </nav>
         <button
+          type="button"
+          className="logout pwbtn"
+          aria-label="Cambiar mi contraseña"
+          title={navCollapsed ? "Cambiar mi contraseña" : undefined}
+          onClick={() => setPwTarget("self")}
+        >
+          <KeyRound size={17} aria-hidden="true" />
+          <span className="navlabel">Mi contraseña</span>
+        </button>
+        <button
           className="logout"
           aria-label="Cerrar sesión"
           title={navCollapsed ? "Cerrar sesión" : undefined}
@@ -1138,6 +1195,26 @@ function App() {
                   />
                 </label>
               </div>
+              <label className="user-list">
+                Lista mayorista
+                <select name="price_list_id" defaultValue="" disabled={!!listsError}>
+                  <option value="">No es mayorista</option>
+                  {priceLists
+                    .filter((l) => l.active)
+                    .map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                      </option>
+                    ))}
+                </select>
+                <small className="omuted">
+                  {listsError
+                    ? "Las listas de precios no están disponibles (migración 20261127b)."
+                    : priceLists.some((l) => l.active)
+                      ? "Sus pedidos usarán esta lista cuando se carguen los precios (fase 2)."
+                      : "Crea una lista en Mayoristas → Vendedores mayoristas."}
+                </small>
+              </label>
               <div className="rolechecks" aria-label="Roles del nuevo usuario">
                 {roleCatalog.map((r) => (
                   <label key={r.id}>
@@ -1159,6 +1236,7 @@ function App() {
                   <th>Nombre</th>
                   <th>Username</th>
                   <th>Roles (marcar para asignar)</th>
+                  <th>Mayorista</th>
                   <th>Estado</th>
                   <th>Acción</th>
                 </tr>
@@ -1196,8 +1274,42 @@ function App() {
                         ))}
                       </div>
                     </td>
-                    <td>{s.active ? "Activo" : "Inactivo"}</td>
                     <td>
+                      <select
+                        className="user-list-pick"
+                        aria-label={"Lista mayorista de " + s.full_name}
+                        disabled={busy || !!listsError}
+                        value={sellerLists.find((x) => x.seller_id === s.id)?.price_list_id || ""}
+                        onChange={(e) => assignPriceList(s.id, e.target.value || null)}
+                      >
+                        <option value="">No es mayorista</option>
+                        {priceLists
+                          .filter(
+                            (l) =>
+                              l.active || sellerLists.some((x) => x.seller_id === s.id && x.price_list_id === l.id),
+                          )
+                          .map((l) => (
+                            <option key={l.id} value={l.id}>
+                              {l.name}
+                              {!l.active ? " (inactiva)" : ""}
+                            </option>
+                          ))}
+                      </select>
+                    </td>
+                    <td>{s.active ? "Activo" : "Inactivo"}</td>
+                    <td className="user-actions">
+                      {s.id !== profile.id && (
+                        <button
+                          type="button"
+                          className="iconbtn"
+                          disabled={busy}
+                          aria-label={"Cambiar contraseña de " + s.full_name}
+                          title="Cambiar contraseña"
+                          onClick={() => setPwTarget(s)}
+                        >
+                          <KeyRound size={17} aria-hidden="true" />
+                        </button>
+                      )}
                       {s.id !== profile.id && (
                         <button
                           className="secondary compact"
@@ -1217,7 +1329,109 @@ function App() {
           </div>
         )}
       </main>
+      {pwTarget && (
+        <PasswordModal
+          key={pwTarget === "self" ? "self" : pwTarget.id}
+          title={
+            pwTarget === "self"
+              ? "Cambiar mi contraseña"
+              : "Cambiar contraseña · " + (pwTarget.full_name || pwTarget.username)
+          }
+          intro={
+            pwTarget === "self"
+              ? "La nueva contraseña se usa desde el próximo inicio de sesión."
+              : "El usuario entrará con esta contraseña la próxima vez que inicie sesión. Compártela por un medio seguro."
+          }
+          busy={busy}
+          onClose={() => setPwTarget(null)}
+          onSubmit={async (pw) => {
+            const err = pwTarget === "self" ? await changeOwnPassword(pw) : await adminSetPassword(pwTarget, pw);
+            if (!err) setPwTarget(null);
+            return err;
+          }}
+        />
+      )}
     </div>
+  );
+}
+// Ventana para fijar una contraseña nueva (propia o de otro usuario).
+// onSubmit devuelve "" si salió bien o el texto del error.
+function PasswordModal({ title, intro, busy, onClose, onSubmit }) {
+  const [pw, setPw] = useState(""),
+    [pw2, setPw2] = useState(""),
+    [show, setShow] = useState(false),
+    [err, setErr] = useState("");
+  const tooShort = pw.length > 0 && pw.length < 10;
+  const mismatch = pw2.length > 0 && pw !== pw2;
+  const ok = pw.length >= 10 && pw.length <= 128 && pw === pw2;
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!ok) return;
+    setErr("");
+    setErr(await onSubmit(pw));
+  };
+  return (
+    <Modal
+      title={title}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="secondary" onClick={onClose}>
+            Cancelar
+          </button>
+          <button type="submit" form="pwform" disabled={busy || !ok}>
+            {busy && <Loader2 size={16} className="spin" aria-hidden="true" />} Guardar contraseña
+          </button>
+        </>
+      }
+    >
+      <form id="pwform" className="pwform" onSubmit={submit}>
+        <p className="omuted">{intro}</p>
+        <label>
+          Contraseña nueva
+          <input
+            type={show ? "text" : "password"}
+            autoComplete="new-password"
+            minLength={10}
+            maxLength={128}
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+            aria-invalid={tooShort}
+            aria-describedby="pw-help"
+            required
+          />
+        </label>
+        <small id="pw-help" className={tooShort ? "pw-bad" : "omuted"}>
+          Mínimo 10 caracteres.
+        </small>
+        <label>
+          Repite la contraseña
+          <input
+            type={show ? "text" : "password"}
+            autoComplete="new-password"
+            maxLength={128}
+            value={pw2}
+            onChange={(e) => setPw2(e.target.value)}
+            aria-invalid={mismatch}
+            aria-describedby={mismatch ? "pw-mismatch" : undefined}
+            required
+          />
+        </label>
+        {mismatch && (
+          <small id="pw-mismatch" className="pw-bad">
+            Las contraseñas no coinciden.
+          </small>
+        )}
+        <label className="pw-show">
+          <input type="checkbox" checked={show} onChange={(e) => setShow(e.target.checked)} /> Mostrar contraseña
+        </label>
+        {err && (
+          <div className="alert error" role="alert">
+            {err}
+          </div>
+        )}
+      </form>
+    </Modal>
   );
 }
 function UsernameEditor({ user, busy, onSave }) {

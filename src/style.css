@@ -2100,3 +2100,17 @@ tr.is-inactive .plist-thumb { opacity: .55 }
   .wseller { grid-template-columns: minmax(0, 1fr) auto; padding: 12px }
   .wseller-pick { grid-column: 1 / -1; grid-row: 2 }
 }
+
+/* ===== Usuarios: lista mayorista y cambio de contraseña ===== */
+.logout.pwbtn { margin-top: auto }
+.logout.pwbtn + .logout { margin-top: 0; border-top: 0; padding-top: 10px }
+.user-create .user-list { max-width: 360px; margin-top: 14px }
+.user-create .user-list small { font-weight: 400 }
+.user-list-pick { min-width: 160px }
+.user-actions { display: flex; align-items: center; gap: 8px }
+.pwform { display: grid; gap: 8px }
+.pwform label { display: grid; gap: 6px; font-weight: 600 }
+.pwform .pw-show { display: flex; align-items: center; gap: 8px; font-weight: 400 }
+.pwform .pw-show input { width: auto; margin: 0 }
+.pwform .pw-bad { color: var(--danger) }
+.pwform p { margin: 0 0 6px }

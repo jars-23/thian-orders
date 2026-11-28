@@ -8,11 +8,13 @@ flowchart LR
   U[Usuario<br/>navegador] --> SPA[SPA React + Vite<br/>GitHub Pages]
   SPA -->|login username| EF1[Edge Function<br/>login-username]
   SPA -->|alta de usuarios admin| EF2[Edge Function<br/>create-user]
+  SPA -->|admin cambia contraseña| EF3[Edge Function<br/>admin-set-password]
   SPA -->|select con RLS| PG[(PostgREST<br/>tablas)]
   SPA -->|rpc| RPC[RPC plpgsql]
   SPA -->|fotos| ST[(Storage<br/>product-images)]
   EF1 --> AUTH[Supabase Auth]
   EF2 --> AUTH
+  EF3 --> AUTH
   RPC --> DB[(Postgres)]
   PG --> DB
   GH[GitHub Actions<br/>Deploy Thian Candle] -->|push a main| SPA
